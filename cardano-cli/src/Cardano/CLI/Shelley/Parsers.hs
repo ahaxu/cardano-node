@@ -26,6 +26,7 @@ import           Cardano.CLI.Shelley.Key (InputFormat (..), PaymentVerifier (..)
                    StakeVerifier (..), VerificationKeyOrFile (..), VerificationKeyOrHashOrFile (..),
                    VerificationKeyTextOrFile (..), deserialiseInput, renderInputDecodeError)
 import           Cardano.CLI.Types
+
 import           Control.Monad.Fail (fail)
 import           Data.Attoparsec.Combinator ((<?>))
 import           Data.Time.Clock (UTCTime)
@@ -513,7 +514,7 @@ pTransaction =
                                  <*> many pCertificateFile
                                  <*> many pWithdrawal
                                  <*> pTxMetadataJsonSchema
-                                 <*> many pScript
+                                 <*> many (pScriptFor "auxiliary-script-file" "Filepath of auxiliary script(s)")
                                  <*> many pMetadataFile
                                  <*> optional pUpdateProposalFile
                                  <*> pTxBodyFile Output
@@ -1055,23 +1056,26 @@ pProtocolParamsFile =
       <> Opt.completer (Opt.bashCompleter "file")
       )
 
-pCertificateFile :: Parser CertificateFile
+pCertificateFile :: Parser (CertificateFile, Maybe ScriptFile)
 pCertificateFile =
-  CertificateFile <$>
-    (  Opt.strOption
-         (  Opt.long "certificate-file"
-         <> Opt.metavar "FILE"
-         <> Opt.help "Filepath of the certificate. This encompasses all \
-                     \types of certificates (stake pool certificates, \
-                     \stake key certificates etc)"
-         <> Opt.completer (Opt.bashCompleter "file")
-         )
-    <|>
-       Opt.strOption
-         (  Opt.long "certificate"
-         <> Opt.internal
-         )
-    )
+  (,) <$> (CertificateFile
+             <$> (  Opt.strOption
+                      (  Opt.long "certificate-file"
+                      <> Opt.metavar "CERTIFICATEFILE"
+                      <> Opt.help helpText
+                      <> Opt.completer (Opt.bashCompleter "file")
+                      )
+                  <|>
+                     Opt.strOption (Opt.long "certificate" <> Opt.internal)
+                  )
+          )
+      <*> optional (pScriptFor "certificate-script-file" "Filepath of the certificate script witness")
+ where
+   helpText = "Filepath of the certificate. This encompasses all \
+              \types of certificates (stake pool certificates, \
+              \stake key certificates etc). Optionally specify a script witness."
+
+
 
 pPoolMetadataFile :: Parser PoolMetadataFile
 pPoolMetadataFile =
@@ -1126,19 +1130,24 @@ pMetadataFile =
           <> Opt.completer (Opt.bashCompleter "file")
           )
 
-pWithdrawal :: Parser (StakeAddress, Lovelace)
+pWithdrawal :: Parser (StakeAddress, Lovelace, Maybe ScriptFile)
 pWithdrawal =
-    Opt.option (readerFromAttoParser parseWithdrawal)
-      (  Opt.long "withdrawal"
-      <> Opt.metavar "WITHDRAWAL"
-      <> Opt.help "The reward withdrawal as StakeAddress+Lovelace where \
-                  \StakeAddress is the Bech32-encoded stake address \
-                  \followed by the amount in Lovelace."
-      )
-  where
-    parseWithdrawal :: Atto.Parser (StakeAddress, Lovelace)
-    parseWithdrawal =
-      (,) <$> parseStakeAddress <* Atto.char '+' <*> parseLovelace
+    (\(stakeAddr,lovelace) maybeScriptFp -> (stakeAddr, lovelace, maybeScriptFp))
+      <$> Opt.option (readerFromAttoParser parseWithdrawal)
+            (  Opt.long "withdrawal"
+            <> Opt.metavar "WITHDRAWAL"
+            <> Opt.help helpText
+            )
+      <*> optional (pScriptFor "withdrawal-script-file" "Filepath of the withdrawal script witness.")
+ where
+   helpText = "The reward withdrawal as StakeAddress+Lovelace where \
+              \StakeAddress is the Bech32-encoded stake address \
+              \followed by the amount in Lovelace. Optionally specify \
+              \a script witness."
+
+   parseWithdrawal :: Atto.Parser (StakeAddress, Lovelace)
+   parseWithdrawal =
+     (,) <$> parseStakeAddress <* Atto.char '+' <*> parseLovelace
 
 
 pUpdateProposalFile :: Parser UpdateProposalFile
@@ -1189,8 +1198,6 @@ pSomeWitnessSigningData =
           )
         <*>
           optional pByronAddress
-    <|>
-      ScriptWitnessSigningData <$> pScript
 
 pSigningKeyFile :: FileDirection -> Parser SigningKeyFile
 pSigningKeyFile fdir =
@@ -1216,8 +1223,6 @@ pWitnessSigningData =
         )
       <*>
         optional pByronAddress
-  <|>
-    ScriptWitnessSigningData <$> pScript
 
 pKesPeriod :: Parser KESPeriod
 pKesPeriod =
@@ -1574,13 +1579,14 @@ pCardanoEra = asum
   , pure (AnyCardanoEra MaryEra)
   ]
 
-pTxIn :: Parser TxIn
+pTxIn :: Parser (TxIn, Maybe ScriptFile)
 pTxIn =
-  Opt.option (readerFromAttoParser parseTxIn)
-    (  Opt.long "tx-in"
-    <> Opt.metavar "TX-IN"
-    <> Opt.help "The input transaction as TxId#TxIx where TxId is the transaction hash and TxIx is the index."
-    )
+     (,) <$> Opt.option (readerFromAttoParser parseTxIn)
+               (  Opt.long "tx-in"
+                <> Opt.metavar "TX-IN"
+               <> Opt.help "TxId#TxIx"
+               )
+         <*> optional (pScriptFor "txin-script-file" "Filepath of the spending script witness")
 
 parseTxIn :: Atto.Parser TxIn
 parseTxIn = TxIn <$> parseTxId <*> (Atto.char '#' *> parseTxIx)
@@ -1615,14 +1621,19 @@ pTxOut =
                   \Lovelace."
       )
 
-pMintMultiAsset :: Parser Value
+pMintMultiAsset :: Parser (Value, [ScriptFile])
 pMintMultiAsset =
-  Opt.option
-    (readerFromParsecParser parseValue)
-      (  Opt.long "mint"
-      <> Opt.metavar "VALUE"
-      <> Opt.help "Mint multi-asset value(s) with the multi-asset cli syntax"
-      )
+  (,) <$> Opt.option
+            (readerFromParsecParser parseValue)
+              (  Opt.long "mint"
+              <> Opt.metavar "VALUE"
+              <> Opt.help helpText
+              )
+      <*> some (pScriptFor "minting-script-file" "Filepath of the multi-asset witness script.")
+
+ where
+   helpText = "Mint multi-asset value(s) with the multi-asset cli syntax. \
+               \You must specifiy a script witness."
 
 pInvalidBefore :: Parser SlotNo
 pInvalidBefore =
@@ -2414,7 +2425,7 @@ parseStakeAddress :: Atto.Parser StakeAddress
 parseStakeAddress = do
     str <- lexPlausibleAddressString
     case deserialiseAddress AsStakeAddress str of
-      Nothing   -> fail "invalid address"
+      Nothing   -> fail $ "invalid address: " <> Text.unpack str
       Just addr -> pure addr
 
 lexPlausibleAddressString :: Atto.Parser Text
