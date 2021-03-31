@@ -376,6 +376,7 @@ instance HasSeverityAnnotation (TracePeerSelection addr) where
       TraceDemoteAsynchronous    {} -> Info
       TraceGovernorWakeup        {} -> Info
       TraceChurnWait             {} -> Info
+      TraceXXX                   {} -> Info
 
 instance HasPrivacyAnnotation (DebugPeerSelection addr conn)
 instance HasSeverityAnnotation (DebugPeerSelection addr conn) where
