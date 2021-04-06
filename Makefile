@@ -34,16 +34,16 @@ test-chairmans-cluster:
 	@scripts/chairmans-cluster/cluster-test.sh
 
 profiles:
-	@jq .    $$(nix-build -A profiles)
+	@./nix/workbench/wb dump-profiles
 
 profile-names:
-	@jq keys $$(nix-build -A profiles)
+	@./nix/workbench/wb profile-names
 
 CLUSTER_PROFILE    = default-mary
 CLUSTER_ARGS_EXTRA =
 
 cluster-shell:
-	nix-shell --max-jobs 8 --cores 0 --command 'start-cluster; return' --argstr clusterProfile ${CLUSTER_PROFILE} --command 'start-cluster ${CLUSTER_ARGS_EXTRA}; return'
+	nix-shell --max-jobs 8 --cores 0 --arg 'autoStartCluster' true --argstr clusterProfile ${CLUSTER_PROFILE}
 
 cluster-shell-trace:             CLUSTER_ARGS_EXTRA = --trace
 large-state-cluster-shell-trace: CLUSTER_ARGS_EXTRA = --trace

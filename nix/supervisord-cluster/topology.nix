@@ -6,57 +6,7 @@
 , localPortBase
 }:
 with composition; with lib;
-let
-  # metadata = {
-  #   inherit benchmarkingProfileName benchmarkingProfile benchmarkingTopology;
-  # };
-  producers =  cfg.producers;
-
-  topologyNode = builtins.toFile "topology.yaml" (builtins.toJSON {
-    Producers =
-      map (n: {
-        addr = let a = n.addr or n; in if (nodes ? ${a}) then hostName a else a;
-        port = n.port or nodePort;
-        valency = n.valency or 1;
-      }) cfg.producers;
-  });
-in
 {
-  ## TODO: derive from topology, instead of building a parallel structure.
-  nodeSpecs = lib.listToAttrs
-    ((flip genList composition.n_bft_hosts)
-     (n: let i = n; in
-         lib.nameValuePair "node-${toString i}"
-           { name = "node-${toString i}";
-             kind = "bft";
-             port = localPortBase + i;
-             isProducer = true;
-             inherit i;
-           })
-       ++
-     (flip genList composition.n_pool_hosts)
-     (n: let i = n + composition.n_bft_hosts; in
-         lib.nameValuePair "node-${toString i}"
-           { name = "node-${toString i}";
-             kind = "pool";
-             port = localPortBase + i;
-             isProducer = true;
-             inherit i;
-           })
-       ++
-     (flip genList (if composition.with_observer
-                    then 1 else 0))
-     (n: let i = n + composition.n_bft_hosts + composition.n_pool_hosts; in
-         lib.nameValuePair "node-${toString i}"
-           { name = "node-${toString i}";
-             kind = "observer";
-             port = localPortBase + i;
-             isProducer = false;
-             inherit i;
-           }));
-
-  topologyPdf = "${stateDir}/topology.pdf";
-
   mkTopologyBash =
     ''
   ## 0. Generate the overall topology, in the 'cardano-ops'/nixops style:

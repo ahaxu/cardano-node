@@ -3,38 +3,171 @@
 , bech32
 , basePort ? 30000
 , stateDir ? "state-cluster"
-, cacheDir ? "~/.cache"
+, cacheDir ? "${__getEnv "HOME"}/.cache"
 , extraSupervisorConfig ? {}
 , useCabalRun ? false
+, enableEKG ? true
 ##
 , profileName ? "default-mary"
-, profileOverride ? {}
 , ...
 }:
 with lib;
 let
-  path = makeBinPath
-    [ bech32 pkgs.jq pkgs.gnused pkgs.coreutils pkgs.bash pkgs.moreutils ];
+  backend =
+    rec
+    { ## First, generic items:
+      inherit basePort;
+      staggerPorts = true;
 
-  profilesJSON = pkgs.callPackage ./profiles.nix
-    { inherit
-      lib;
+      topologyForNode =
+        { profile, nodeSpec }:
+        let inherit (nodeSpec) name i; in
+        pkgs.runWorkbench "topology-${name}.json"
+          (if nodeSpec.isProducer
+           then "topology for-local-node     ${toString i}   ${profile.topology.files} ${toString basePort}"
+           else "topology for-local-observer ${profile.name} ${profile.topology.files} ${toString basePort}");
+
+      finaliseNodeService =
+        { name, i, isProducer, ... }: svc: recursiveUpdate svc
+          ({
+            stateDir       = stateDir + "/${name}";
+            ## Everything is local in the supervisord setup:
+            socketPath     = "node.socket";
+            topology       = "topology.json";
+            nodeConfigFile = "config.json";
+          } // optionalAttrs useCabalRun {
+            executable     = "cabal run exe:cardano-node --";
+          } // optionalAttrs isProducer {
+            operationalCertificate = "../shelley/node-keys/node${toString i}.opcert";
+            kesKey         = "../shelley/node-keys/node-kes${toString i}.skey";
+            vrfKey         = "../shelley/node-keys/node-vrf${toString i}.skey";
+          });
+
+      finaliseNodeConfig =
+        { port, ... }: cfg: recursiveUpdate cfg
+          ({
+            ShelleyGenesisFile   = "../shelley/genesis.json";
+            ByronGenesisFile     =   "../byron/genesis.json";
+          } // optionalAttrs enableEKG {
+            hasEKG               = port + supervisord.portShiftEkg;
+            hasPrometheus        = [ "127.0.0.1" (port + supervisord.portShiftPrometheus) ];
+            setupBackends = [
+              "EKGViewBK"
+            ];
+          });
+
+      ## Backend-specific:
+      supervisord =
+        {
+          inherit
+            extraSupervisorConfig;
+
+          portShiftEkg        = 100;
+          portShiftPrometheus = 200;
+
+          mkSupervisorConf =
+            profile:
+            pkgs.callPackage ./supervisor-conf.nix
+            { inherit (profile) node-services;
+              inherit
+                pkgs lib stateDir
+                basePort
+                extraSupervisorConfig;
+            };
+        };
+
+      ## Actions:
+      deploy =
+        profile:
+        ''
+        cat <<EOF
+Starting cluster:
+  - state dir:       ${stateDir}
+  - profile JSON:    ${profile.JSON}
+  - node specs:      ${profile.node-specs.JSON}
+  - topology:        ${profile.topology.files}/topology-nixops.json ${profile.topology.files}/topology.pdf
+  - node port base:  ${toString basePort}
+  - EKG URLs:        http://localhost:${toString (basePort + supervisord.portShiftEkg)}/
+  - Prometheus URLs: http://localhost:${toString (basePort + supervisord.portShiftPrometheus)}/metrics
+
+EOF
+
+        ${__concatStringsSep "\n"
+          (flip mapAttrsToList profile.node-services
+            (name: svc:
+              ''
+              mkdir -p ${stateDir}/${name}
+              cp ${svc.nodeSpec.JSON}      ${stateDir}/${name}/spec.json
+              cp ${svc.serviceConfig.JSON} ${stateDir}/${name}/service-config.json
+              cp ${svc.nodeConfig.JSON}    ${stateDir}/${name}/config.json
+              cp ${svc.topology.JSON}      ${stateDir}/${name}/topology.json
+              cp ${svc.startupScript}      ${stateDir}/${name}/start.sh
+              ''
+            ))}
+
+        SUPERVISOR_CONF=${supervisord.mkSupervisorConf profile}
+        cp $SUPERVISOR_CONF ${stateDir}/supervisor/supervisord.conf
+        ${pkgs.python3Packages.supervisor}/bin/supervisord \
+            --config $SUPERVISOR_CONF $@
+        '';
+
+      activate =
+        profile:
+        ''
+        ## Wait for socket activation:
+        #
+        if test ! -v "CARDANO_NODE_SOCKET_PATH"
+        then export CARDANO_NODE_SOCKET_PATH=$PWD/${stateDir}/node-0/node.socket; fi
+        while [ ! -S $CARDANO_NODE_SOCKET_PATH ]; do echo "Waiting 5 seconds for bft node to start"; sleep 5; done
+
+        echo 'Recording node pids..'
+        ${pkgs.psmisc}/bin/pstree -Ap $(cat ${stateDir}/supervisor/supervisord.pid) |
+        grep 'cabal.*cardano-node' |
+        sed -e 's/^.*-+-cardano-node(\([0-9]*\))-.*$/\1/' \
+        > ${stateDir}/supervisor/cardano-node.pids
+
+        ${optionalString (!profile.value.genesis.single_shot)
+          ''
+          echo "Transfering genesis funds to pool owners, register pools and delegations"
+          cli transaction submit \
+              --cardano-mode \
+              --tx-file ${stateDir}/shelley/transfer-register-delegate-tx.tx \
+              --testnet-magic ${toString profile.value.genesis.network_magic}
+
+          sleep 5
+          ''}
+
+        echo 'Cluster started. Run `stop-cluster` to stop'
+        '';
     };
-  profiles = __fromJSON (__readFile profilesJSON);
 
-  profile = recursiveUpdate profiles."${__trace profileName profileName}" profileOverride;
-  inherit (profile) era composition monetary;
-
-  profileJSONFile = pkgs.writeText "profile-${profile.name}.json"
-    (__toJSON profile);
-
-  topologyNixopsFile = "${stateDir}/topology-nixops.json";
-  topology = pkgs.callPackage ./topology.nix
-    { inherit lib stateDir topologyNixopsFile;
-      inherit (pkgs) graphviz;
-      inherit (profile) composition;
-      localPortBase = basePort;
+  environment =
+    {
+      cardanoLib = pkgs.commonLib.cardanoLib;
+      inherit
+        stateDir cacheDir
+        basePort;
     };
+
+  workbenchProfiles = pkgs.generateWorkbenchProfiles
+    { inherit pkgs backend environment; };
+  # workbenchPkgs = pkgs.callPackage
+  #   ../workbench
+  #   { inherit pkgs backend environment; };
+in
+
+let
+  profile = workbenchProfiles.profiles."${profileName}"
+    or (throw "No such profile: ${profileName};  Known profiles: ${toString (__attrNames workbenchProfiles.profiles)}");
+
+  inherit (profile.value) era composition monetary;
+
+  # topology = pkgs.callPackage ./topology.nix
+  #   { inherit lib stateDir;
+  #     inherit (pkgs) graphviz;
+  #     inherit (profile.value) composition;
+  #     localPortBase = basePort;
+  #   };
 
   defCardanoExesBash = pkgs.callPackage ./cardano-exes.nix
     { inherit (pkgs) cabal-install cardano-node cardano-cli cardano-topology;
@@ -47,120 +180,43 @@ let
       lib
       cacheDir stateDir
       basePort
-      profile
-      profileJSONFile;
-      topologyNixopsFile = "${stateDir}/topology-nixops.json";
+      profile;
     };
 
-  node-setups = pkgs.callPackage ./node-setups.nix
-    { inherit (pkgs.commonLib.cardanoLib) defaultLogConfig;
-      inherit (topology) nodeSpecs;
-      inherit
-        pkgs lib stateDir
-        basePort
-        profile
-        useCabalRun;
-    };
-
-  supervisorConf = pkgs.callPackage ./supervisor-conf.nix
-    { inherit (node-setups) nodeSetups;
-      inherit
-        pkgs lib stateDir
-        basePort
-        extraSupervisorConfig;
-    };
+  path = makeBinPath
+    [ bech32 pkgs.workbench pkgs.jq pkgs.gnused pkgs.coreutils pkgs.bash pkgs.moreutils ];
 
   start = pkgs.writeScriptBin "start-cluster" ''
     set -euo pipefail
+
+    PATH=$PATH:${path}
 
     while test $# -gt 0
     do case "$1" in
         --trace | --debug ) set -x;;
         * ) break;; esac; shift; done
 
-    mkdir -p ${cacheDir}
+    wb supervisor assert-stopped
 
-    if test "$(netstat -pltn 2>/dev/null | grep ':9001 ' | wc -l)" != "0"
-    then echo "Cluster already running. Please run 'stop-cluster' first!"
-         exit 1; fi
+    wb profile describe ${profileName}
 
-    cat <<EOF
-Starting cluster:
-  - state dir:       ${stateDir}
-  - topology:        ${topologyNixopsFile}, ${topology.topologyPdf}
-  - node port base:  ${toString basePort}
-  - EKG URLs:        http://localhost:${toString (node-setups.nodeIndexToEkgPort 0)}/
-  - Prometheus URLs: http://localhost:${toString (node-setups.nodeIndexToPrometheusPort 0)}/metrics
-  - profile JSON:    ${profileJSONFile}
-
-EOF
-
-    ${pkgs.jq}/bin/jq '
-      include "profiles/derived" { search: "${./.}" };
-
-      profile_pretty_describe(.)
-      ' ${profileJSONFile} --raw-output
-
-    rm -rf     ${stateDir}
-    mkdir -p ./${stateDir}/supervisor
-
-    PATH=$PATH:${path}
     ${defCardanoExesBash}
 
-    ${topology.mkTopologyBash}
+    if test -e "${stateDir}" && test ! -f "${stateDir}"/byron-protocol-params.json
+    then echo "ERROR: state directory exists, but looks suspicious -- refusing to remove it: '${stateDir}'" >&2
+         exit 1
+    fi
 
-    ${mkGenesisBash}
+    rm -rf   "${stateDir}"
+    mkdir -p "${stateDir}"/supervisor "${cacheDir}"
 
-    ${__concatStringsSep "\n"
-      (flip mapAttrsToList node-setups.nodeSetups
-        (name: nodeSetup:
-          ''
-          jq . ${__toFile "${name}-node-config.json"
-            (__toJSON nodeSetup.nodeService.nodeConfig)} > \
-             ${stateDir}/${name}/config.json
+    ln -s ${profile.topology.files} "${stateDir}"/topology
 
-          jq . ${__toFile "${name}-service-config.json"
-                (__toJSON
-                   (removeAttrs nodeSetup.nodeServiceConfig
-                      ["override" "overrideDerivation"]))} > \
-             ${stateDir}/${name}/service-config.json
+    wb genesis prepare ${profile.JSON} ${profile.topology.files} \
+       "${stateDir}"/genesis
 
-          jq . ${__toFile "${name}-spec.json"
-                (__toJSON
-                   (removeAttrs nodeSetup.nodeSpec
-                      ["override" "overrideDerivation"]))} > \
-             ${stateDir}/${name}/spec.json
-
-          ''
-        ))}
-
-    cp ${supervisorConf} ${stateDir}/supervisor/supervisord.conf
-    ${pkgs.python3Packages.supervisor}/bin/supervisord \
-        --config ${supervisorConf} $@
-
-    ## Wait for socket activation:
-    #
-    if test ! -v "CARDANO_NODE_SOCKET_PATH"
-    then export CARDANO_NODE_SOCKET_PATH=$PWD/${stateDir}/node-0/node.socket; fi
-    while [ ! -S $CARDANO_NODE_SOCKET_PATH ]; do echo "Waiting 5 seconds for bft node to start"; sleep 5; done
-
-    echo 'Recording node pids..'
-    ${pkgs.psmisc}/bin/pstree -Ap $(cat ${stateDir}/supervisor/supervisord.pid) |
-    grep 'cabal.*cardano-node' |
-    sed -e 's/^.*-+-cardano-node(\([0-9]*\))-.*$/\1/' \
-      > ${stateDir}/supervisor/cardano-node.pids
-
-    ${optionalString (!profile.genesis.single_shot)
-     ''
-      echo "Transfering genesis funds to pool owners, register pools and delegations"
-      cli transaction submit \
-        --cardano-mode \
-        --tx-file ${stateDir}/shelley/transfer-register-delegate-tx.tx \
-        --testnet-magic ${toString profile.genesis.network_magic}
-      sleep 5
-     ''}
-
-    echo 'Cluster started. Run `stop-cluster` to stop'
+    ${backend.deploy   profile}
+    ${backend.activate profile}
   '';
   stop = pkgs.writeScriptBin "stop-cluster" ''
     set -euo pipefail
@@ -175,4 +231,7 @@ EOF
     fi
   '';
 
-in { inherit stateDir start stop profilesJSON profile; }
+in
+{
+  inherit profile start stop;
+}

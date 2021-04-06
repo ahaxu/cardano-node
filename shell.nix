@@ -43,6 +43,7 @@ let
       sqlite-interactive
       tmux
       pkgs.git
+      pkgs.workbench
     ]
     ## Local cluster not available on Darwin,
     ## because psmisc fails to build on Big Sur.
@@ -63,6 +64,12 @@ let
       function atexit() {
           echo "Reverting 'cabal.project' to the index version.."
           ./scripts/cabal-inside-nix-shell.sh --restore
+
+          ${lib.optionalString autoStartCluster ''
+          if wb supervisor is-running;
+          then echo "Stopping cluster (because 'auto-start-cluster' implies this):"
+               stop-cluster
+          fi''}
       }
       trap atexit EXIT
 

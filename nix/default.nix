@@ -33,6 +33,9 @@ let
           // import ./util.nix { inherit haskell-nix; }
           # also expose our sources, nixpkgs and overlays
           // { inherit overlays sources nixpkgs; };
+
+        inherit (pkgs.callPackage ./workbench {})
+          workbench runWorkbench runJq generateWorkbenchProfiles;
       })
       # And, of course, our haskell-nix-ified cabal project:
       (import ./pkgs.nix)
