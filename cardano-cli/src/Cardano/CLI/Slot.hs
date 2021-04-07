@@ -90,11 +90,6 @@ newtype Hash (tag :: Symbol) = Hash { getHash :: ByteString }
 newtype SyncTolerance = SyncTolerance NominalDiffTime
   deriving stock (Generic, Eq, Show)
 
-newtype BlockHeader = BlockHeader
-  { slotNo :: SlotNo
-  }
-  deriving (Show, Eq, Ord, Generic)
-
 data SyncProgress
   = Ready
   | Syncing !(Quantity "percent" Percentage)
@@ -139,14 +134,6 @@ data Qry :: Type -> Type where
   QBind :: Qry a -> (a -> Qry b) -> Qry b
 
 data MkPercentageError = PercentageOutOfBoundsError deriving (Show, Eq)
-
-newtype Block = Block
-  { header :: BlockHeader
-  } deriving (Show, Eq, Ord, Generic)
-
-instance NFData Block
-
-instance NFData BlockHeader
 
 -- | Query the relative time at which a slot starts.
 slotToRelTime :: SlotNo -> Qry RelativeTime
