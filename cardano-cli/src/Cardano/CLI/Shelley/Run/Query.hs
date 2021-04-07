@@ -5,6 +5,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 {-# OPTIONS_GHC -Wno-unticked-promoted-constructors #-}
 
@@ -15,7 +16,7 @@ module Cardano.CLI.Shelley.Run.Query
   ) where
 
 import           Cardano.Prelude hiding (atomically)
-import           Prelude (String)
+import           Prelude (String, error)
 
 import           Data.Aeson (ToJSON (..), (.=))
 import qualified Data.Aeson as Aeson
@@ -42,6 +43,8 @@ import           Cardano.CLI.Helpers (HelpersError (..), pPrintCBOR, renderHelpe
 import           Cardano.CLI.Mary.RenderValue (defaultRenderValueOptions, renderValue)
 import           Cardano.CLI.Shelley.Orphans ()
 import           Cardano.CLI.Shelley.Parsers (OutputFile (..), QueryCmd (..))
+import           Cardano.CLI.Slot (SyncProgress (..), SyncTolerance (..), getSyncProgress,
+                   mkTimeInterpreter)
 import           Cardano.CLI.Types
 
 import           Cardano.Binary (decodeFull)
@@ -155,13 +158,30 @@ runQueryTip (AnyConsensusModeParams cModeParams) network mOutFile = do
   anyEra <- determineEra cModeParams localNodeConnInfo
   mEpoch <- mEpochQuery anyEra consensusMode  localNodeConnInfo
   tip <- liftIO $ getLocalChainTip localNodeConnInfo
+
+  let timeInterpreter = mkTimeInterpreter @IO
+        (error "Tracer IO TimeInterpreterLog")
+        (error "StartTime")
+        (error "EpochSize")
+        (error "SlotLength")
+
+  progress <- liftIO $ getSyncProgress (SyncTolerance 1) (error "BlockHeader") timeInterpreter
+
+  let progressString :: String = case progress of
+        Ready -> "ready"
+        Syncing quantity -> show quantity
+        NotResponding -> "not responding"
+
   let output = encodePretty
         . toObject "era" (Just (toJSON anyEra))
         . toObject "epoch" mEpoch
+        . toObject "progress" (Just (toJSON progressString))
         $ toJSON tip
+
   case mOutFile of
     Just (OutputFile fpath) -> liftIO $ LBS.writeFile fpath output
     Nothing                 -> liftIO $ LBS.putStrLn        output
+
   where
     mEpochQuery
       :: AnyCardanoEra
