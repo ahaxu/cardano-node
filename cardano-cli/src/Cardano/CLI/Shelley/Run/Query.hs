@@ -164,7 +164,11 @@ runQueryTip (AnyConsensusModeParams cModeParams) network mOutFile = do
         (error "EpochSize")
         (error "SlotLength")
 
-  progress <- liftIO $ getSyncProgress (SyncTolerance 1) (error "BlockHeader") timeInterpreter
+  let tipSlotNo = case tip of
+        ChainTipAtGenesis -> 0
+        ChainTip slotNo _ _ -> slotNo
+
+  progress <- liftIO $ getSyncProgress (SyncTolerance 1) tipSlotNo timeInterpreter
 
   let progressString :: String = case progress of
         Right Ready -> "ready"

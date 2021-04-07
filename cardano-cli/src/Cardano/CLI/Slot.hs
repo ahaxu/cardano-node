@@ -90,11 +90,8 @@ newtype Hash (tag :: Symbol) = Hash { getHash :: ByteString }
 newtype SyncTolerance = SyncTolerance NominalDiffTime
   deriving stock (Generic, Eq, Show)
 
-data BlockHeader = BlockHeader
+newtype BlockHeader = BlockHeader
   { slotNo :: SlotNo
-  , blockHeight :: Quantity "block" Word32
-  , headerHash :: !(Hash "BlockHeader")
-  , parentHeaderHash :: !(Hash "BlockHeader")
   }
   deriving (Show, Eq, Ord, Generic)
 
@@ -193,13 +190,13 @@ syncProgress
   -- ^ A time tolerance inside which we consider ourselves synced
   -> TimeInterpreter m
   -- ^ Converts slots to actual time.
-  -> BlockHeader
-  -- ^ Local tip
+  -> SlotNo
+  -- ^ Slot number of tip
   -> RelativeTime
   -- ^ Current Time
   -> m (Either PastHorizonException SyncProgress)
-syncProgress (SyncTolerance tolerance) ti tip now = do
-  timeCoveredResult <- interpretQuery ti $ slotToRelTime $ slotNo tip
+syncProgress (SyncTolerance tolerance) ti tipSlotNo now = do
+  timeCoveredResult <- interpretQuery ti $ slotToRelTime tipSlotNo
   case timeCoveredResult of
     Right timeCovered -> do
       let progress
@@ -210,13 +207,13 @@ syncProgress (SyncTolerance tolerance) ti tip now = do
         return (Right Ready)
       else
         return
-        . Right
-        . Syncing
-        . Quantity
-        . fromRight (error (errMsg progress))
-        . mkPercentage
-        . toRational
-        $ progress
+          . Right
+          . Syncing
+          . Quantity
+          . fromRight (error (errMsg progress))
+          . mkPercentage
+          . toRational
+          $ progress
     Left e -> return (Left e)
   where
     start = RelativeTime 0
@@ -256,15 +253,15 @@ runQuery startTime int = go
 getSyncProgress
     :: HasCallStack
     => SyncTolerance
-    -> BlockHeader
+    -> SlotNo
     -> TimeInterpreter (ExceptT PastHorizonException IO)
     -> IO (Either PastHorizonException SyncProgress)
-getSyncProgress st nodeTip timeInterpreter  = do
+getSyncProgress st tipSlotNo timeInterpreter  = do
   now <- currentRelativeTime ti
   syncProgress
     st
     (neverFails timeInterpreter)
-    nodeTip
+    tipSlotNo
     now
   where
     ti :: TimeInterpreter (MaybeT IO)
