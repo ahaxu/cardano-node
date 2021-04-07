@@ -29,10 +29,8 @@ import           Control.DeepSeq (NFData)
 import           Control.Exception (throwIO)
 import           Control.Monad ((>=>))
 import           Control.Monad.IO.Class (MonadIO (..))
-import           Control.Monad.Trans.Class (lift)
 import           Control.Monad.Trans.Except (ExceptT (..), runExceptT)
 import           Control.Monad.Trans.Maybe (MaybeT (..), exceptToMaybeT)
-import           Control.Tracer (Tracer, contramap, natTracer)
 import           Data.ByteString (ByteString)
 import           Data.Either (fromRight)
 import           Data.Hashable (Hashable)
@@ -77,7 +75,6 @@ newtype StartTime = StartTime UTCTime
 data TimeInterpreter m = forall eras. TimeInterpreter
   { interpreter :: m (Interpreter eras)
   , blockchainStartTime :: StartTime
-  , tracer :: Tracer m TimeInterpreterLog
   }
 
 newtype Quantity (unit :: Symbol) a = Quantity { getQuantity :: a }
@@ -238,7 +235,7 @@ interpretQuery
   => TimeInterpreter m
   -> Qry a
   -> m (Either PastHorizonException a)
-interpretQuery (TimeInterpreter getI start _) qry = do
+interpretQuery (TimeInterpreter getI start) qry = do
   i <- getI
   return (runQuery start i qry)
 
@@ -266,7 +263,7 @@ getSyncProgress st nodeTip timeInterpreter  = do
   now <- currentRelativeTime ti
   syncProgress
     st
-    (neverFails "syncProgress" timeInterpreter)
+    (neverFails timeInterpreter)
     nodeTip
     now
   where
@@ -287,20 +284,17 @@ currentRelativeTime = liftIO . getCurrentTimeRelativeFromStart . blockchainStart
 -- Unexpected @PastHorizonException@s will be thrown in IO, and traced with
 -- Error severity along with the provided motivation.
 neverFails
-  :: String
-  -> TimeInterpreter (ExceptT PastHorizonException IO)
+  :: TimeInterpreter (ExceptT PastHorizonException IO)
   -> TimeInterpreter IO
-neverFails reason = f . hoistTimeInterpreter (runExceptT >=> eitherToIO)
+neverFails = f . hoistTimeInterpreter (runExceptT >=> eitherToIO)
   where
     eitherToIO (Right x) = pure x
     eitherToIO (Left e) = throwIO e
 
-    f (TimeInterpreter getI ss tr) = TimeInterpreter
+    f (TimeInterpreter getI ss) = TimeInterpreter
       { interpreter = getI
       , blockchainStartTime = ss
-      , tracer = contramap (setReason reason) tr
       }
-    setReason r (MsgInterpreterPastHorizon _ t0 e) = MsgInterpreterPastHorizon (Just r) t0 e
 
 -- | Change the underlying monad of the TimeInterpreter with a natural
 -- transformation.
@@ -308,12 +302,11 @@ hoistTimeInterpreter
   :: (forall a. m a -> n a)
   -> TimeInterpreter m
   -> TimeInterpreter n
-hoistTimeInterpreter f (TimeInterpreter getI ss tr) = TimeInterpreter
+hoistTimeInterpreter f (TimeInterpreter getI ss) = TimeInterpreter
   { interpreter = f getI
     -- NOTE: interpreter ti cannot throw PastHorizonException, but
     -- this way we don't have to carry around yet another type parameter.
   , blockchainStartTime = ss
-  , tracer = natTracer f tr
   }
 
 -- | The current system time, compared to the given blockchain start time.
@@ -338,18 +331,15 @@ toRelativeTime (StartTime start) utc
   | utc < start = Nothing
   | otherwise = Just $ Cardano.toRelativeTime (SystemStart start) utc
 
-
 -- | Set up a 'TimeInterpreter' for a given start time, and an 'Interpreter'
 -- queried from the ledger layer.
 mkTimeInterpreter
     :: Monad m
-    => Tracer m TimeInterpreterLog
-    -> StartTime
+    => StartTime
     -> EpochSize
     -> Cardano.SlotLength
     -> TimeInterpreter (ExceptT PastHorizonException m)
-mkTimeInterpreter tr start sz len = TimeInterpreter
+mkTimeInterpreter start sz len = TimeInterpreter
     { interpreter = pure (mkInterpreter (neverForksSummary sz len))
     , blockchainStartTime = start
-    , tracer = natTracer lift tr
     }

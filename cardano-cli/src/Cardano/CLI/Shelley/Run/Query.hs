@@ -160,7 +160,6 @@ runQueryTip (AnyConsensusModeParams cModeParams) network mOutFile = do
   tip <- liftIO $ getLocalChainTip localNodeConnInfo
 
   let timeInterpreter = mkTimeInterpreter @IO
-        (error "Tracer IO TimeInterpreterLog")
         (error "StartTime")
         (error "EpochSize")
         (error "SlotLength")
