@@ -32,7 +32,7 @@ import           Control.Monad.IO.Class (MonadIO (..))
 import           Control.Monad.Trans.Class (lift)
 import           Control.Monad.Trans.Except (ExceptT (..), runExceptT)
 import           Control.Monad.Trans.Maybe (MaybeT (..), exceptToMaybeT)
-import           Control.Tracer (Tracer, contramap, natTracer, traceWith)
+import           Control.Tracer (Tracer, contramap, natTracer)
 import           Data.ByteString (ByteString)
 import           Data.Either (fromRight)
 import           Data.Hashable (Hashable)
@@ -201,23 +201,27 @@ syncProgress
   -- ^ Local tip
   -> RelativeTime
   -- ^ Current Time
-  -> m SyncProgress
+  -> m (Either PastHorizonException SyncProgress)
 syncProgress (SyncTolerance tolerance) ti tip now = do
-  timeCovered <- interpretQuery ti $ slotToRelTime $ slotNo tip
-  let progress
-        | now == start = 0
-        | otherwise = convert timeCovered % convert now
+  timeCoveredResult <- interpretQuery ti $ slotToRelTime $ slotNo tip
+  case timeCoveredResult of
+    Right timeCovered -> do
+      let progress
+            | now == start = 0
+            | otherwise = convert timeCovered % convert now
 
-  if withinTolerance timeCovered now then
-    return Ready
-  else
-    return
-    . Syncing
-    . Quantity
-    . fromRight (error (errMsg progress))
-    . mkPercentage
-    . toRational
-    $ progress
+      if withinTolerance timeCovered now then
+        return (Right Ready)
+      else
+        return
+        . Right
+        . Syncing
+        . Quantity
+        . fromRight (error (errMsg progress))
+        . mkPercentage
+        . toRational
+        $ progress
+    Left e -> return (Left e)
   where
     start = RelativeTime 0
 
@@ -234,14 +238,11 @@ interpretQuery
   => Monad m
   => TimeInterpreter m
   -> Qry a
-  -> m a
-interpretQuery (TimeInterpreter getI start tr handleRes) qry = do
+  -> m (Either PastHorizonException a)
+interpretQuery (TimeInterpreter getI start _ _) qry = do
   i <- getI
   let res = runQuery start i qry
-  case res of
-    Left e -> traceWith tr $ MsgInterpreterPastHorizon Nothing start e
-    Right _ -> pure ()
-  handleRes res
+  return res
 
 runQuery
   :: HasCallStack
@@ -262,7 +263,7 @@ getSyncProgress
     => SyncTolerance
     -> BlockHeader
     -> TimeInterpreter (ExceptT PastHorizonException IO)
-    -> IO SyncProgress
+    -> IO (Either PastHorizonException SyncProgress)
 getSyncProgress st nodeTip timeInterpreter  = do
   now <- currentRelativeTime ti
   syncProgress

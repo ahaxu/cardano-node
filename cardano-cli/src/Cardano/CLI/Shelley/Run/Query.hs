@@ -168,9 +168,10 @@ runQueryTip (AnyConsensusModeParams cModeParams) network mOutFile = do
   progress <- liftIO $ getSyncProgress (SyncTolerance 1) (error "BlockHeader") timeInterpreter
 
   let progressString :: String = case progress of
-        Ready -> "ready"
-        Syncing quantity -> show quantity
-        NotResponding -> "not responding"
+        Right Ready -> "ready"
+        Right (Syncing quantity) -> show quantity
+        Right NotResponding -> "not responding"
+        Left e -> show e
 
   let output = encodePretty
         . toObject "era" (Just (toJSON anyEra))
