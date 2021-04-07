@@ -78,7 +78,6 @@ data TimeInterpreter m = forall eras. TimeInterpreter
   { interpreter :: m (Interpreter eras)
   , blockchainStartTime :: StartTime
   , tracer :: Tracer m TimeInterpreterLog
-  , handleResult :: forall a. Either PastHorizonException a -> m a
   }
 
 newtype Quantity (unit :: Symbol) a = Quantity { getQuantity :: a }
@@ -239,10 +238,9 @@ interpretQuery
   => TimeInterpreter m
   -> Qry a
   -> m (Either PastHorizonException a)
-interpretQuery (TimeInterpreter getI start _ _) qry = do
+interpretQuery (TimeInterpreter getI start _) qry = do
   i <- getI
-  let res = runQuery start i qry
-  return res
+  return (runQuery start i qry)
 
 runQuery
   :: HasCallStack
@@ -297,11 +295,10 @@ neverFails reason = f . hoistTimeInterpreter (runExceptT >=> eitherToIO)
     eitherToIO (Right x) = pure x
     eitherToIO (Left e) = throwIO e
 
-    f (TimeInterpreter getI ss tr h) = TimeInterpreter
+    f (TimeInterpreter getI ss tr) = TimeInterpreter
       { interpreter = getI
       , blockchainStartTime = ss
       , tracer = contramap (setReason reason) tr
-      , handleResult = h
       }
     setReason r (MsgInterpreterPastHorizon _ t0 e) = MsgInterpreterPastHorizon (Just r) t0 e
 
@@ -311,13 +308,12 @@ hoistTimeInterpreter
   :: (forall a. m a -> n a)
   -> TimeInterpreter m
   -> TimeInterpreter n
-hoistTimeInterpreter f (TimeInterpreter getI ss tr h) = TimeInterpreter
+hoistTimeInterpreter f (TimeInterpreter getI ss tr) = TimeInterpreter
   { interpreter = f getI
     -- NOTE: interpreter ti cannot throw PastHorizonException, but
     -- this way we don't have to carry around yet another type parameter.
   , blockchainStartTime = ss
   , tracer = natTracer f tr
-  , handleResult = f . h
   }
 
 -- | The current system time, compared to the given blockchain start time.
@@ -356,5 +352,4 @@ mkTimeInterpreter tr start sz len = TimeInterpreter
     { interpreter = pure (mkInterpreter (neverForksSummary sz len))
     , blockchainStartTime = start
     , tracer = natTracer lift tr
-    , handleResult = ExceptT . pure
     }
