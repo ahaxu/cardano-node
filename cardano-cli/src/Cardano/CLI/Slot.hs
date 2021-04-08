@@ -1,12 +1,9 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE GeneralisedNewtypeDeriving #-}
 {-# LANGUAGE KindSignatures #-}
-{-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE RankNTypes #-}
 
 module Cardano.CLI.Slot
@@ -77,11 +74,6 @@ data TimeInterpreter m = forall eras. TimeInterpreter
   , blockchainStartTime :: StartTime
   }
 
-newtype Quantity (unit :: Symbol) a = Quantity { getQuantity :: a }
-  deriving stock (Generic, Show, Eq, Ord)
-  deriving newtype (Bounded, Enum, Hashable)
-  deriving newtype NFData
-
 newtype Hash (tag :: Symbol) = Hash { getHash :: ByteString }
   deriving stock (Generic, Eq, Ord)
   deriving (Read, Show) via (Quiet (Hash tag))
@@ -92,7 +84,7 @@ newtype SyncTolerance = SyncTolerance NominalDiffTime
 
 data SyncProgress
   = Ready
-  | Syncing !(Quantity "percent" Percentage)
+  | Syncing Percentage
   | NotResponding
   deriving (Generic, Eq, Show)
 
@@ -196,7 +188,6 @@ syncProgress (SyncTolerance tolerance) ti tipSlotNo now = do
         return
           . Right
           . Syncing
-          . Quantity
           . fromRight (error (errMsg progress))
           . mkPercentage
           . toRational
