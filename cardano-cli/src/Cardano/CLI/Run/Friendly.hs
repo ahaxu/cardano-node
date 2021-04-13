@@ -12,8 +12,10 @@ module Cardano.CLI.Run.Friendly (friendlyTxBodyBS) where
 
 import           Cardano.Prelude
 
-import           Data.Aeson (Object, Value (..), object, toJSON, (.=))
+import           Data.Aeson (Object, ToJSON, Value (..), object, toJSON, (.=))
 import qualified Data.HashMap.Strict as HashMap
+import qualified Data.Map.Strict as Map
+import           Data.Yaml (array)
 import           Data.Yaml.Pretty (defConfig, encodePretty, setConfCompare)
 
 import           Cardano.Api as Api (AddressInEra (..),
@@ -64,7 +66,7 @@ friendlyTxBodyShelley body =
     [ "inputs" .= Shelley._inputs body
     , "outputs" .= fmap friendlyTxOutShelley (Shelley._outputs body)
     , "certificates" .= fmap textShow (Shelley._certs body)
-    , "withdrawals" .= Shelley.unWdrl (Shelley._wdrls body)
+    , "withdrawals" .= friendlyWithdrawalsShelley (Shelley._wdrls body)
     , "fee" .= Shelley._txfee body
     , "time to live" .= Shelley._ttl body
     , "update" .= fmap textShow (Shelley._txUpdate body)
@@ -129,17 +131,33 @@ friendlyValidityInterval
       , "invalid hereafter" .= invalidHereafter
       ]
 
-friendlyTxOutShelley :: TxOut (Ledger.ShelleyEra StandardCrypto) -> Value
-friendlyTxOutShelley (TxOut addr amount) =
+friendlyAddressWithAmount
+  :: ToJSON coinValue => Addr StandardCrypto -> coinValue -> Value
+friendlyAddressWithAmount addr amount =
   Object $ HashMap.insert "amount" (toJSON amount) $ friendlyAddress addr
+
+friendlyWithdrawalsShelley :: Shelley.Wdrl StandardCrypto -> Value
+friendlyWithdrawalsShelley (Shelley.Wdrl withdrawals) =
+  array
+    [ Object $
+      HashMap.insert "Bech32" (String addressBech32) $
+      HashMap.insert "amount" (toJSON amount) $
+      assertObject $ toJSON addr
+    | (addr, amount) <- Map.assocs withdrawals
+    , let addressBech32 = serialiseAddress addr
+            -- case fromShelleyAddr @Api.ShelleyEra addr of
+            --   AddressInEra (ShelleyAddressInEra _) a -> serialiseAddress a
+            --   AddressInEra ByronAddressInAnyEra    a -> serialiseAddress a
+    ]
+
+friendlyTxOutShelley :: TxOut (Ledger.ShelleyEra StandardCrypto) -> Value
+friendlyTxOutShelley (TxOut addr amount) = friendlyAddressWithAmount addr amount
 
 friendlyTxOutAllegra :: TxOut (ShelleyMAEra 'Allegra StandardCrypto) -> Value
-friendlyTxOutAllegra (TxOut addr amount) =
-  Object $ HashMap.insert "amount" (toJSON amount) $ friendlyAddress addr
+friendlyTxOutAllegra (TxOut addr amount) = friendlyAddressWithAmount addr amount
 
 friendlyTxOutMary :: TxOut (ShelleyMAEra 'Mary StandardCrypto) -> Value
-friendlyTxOutMary (TxOut addr amount) =
-  Object $ HashMap.insert "amount" (toJSON amount) $ friendlyAddress addr
+friendlyTxOutMary (TxOut addr amount) = friendlyAddressWithAmount addr amount
 
 friendlyAddress :: Addr StandardCrypto -> Object
 friendlyAddress addr =
@@ -160,7 +178,7 @@ friendlyAddress addr =
     addressBech32 =
       case fromShelleyAddr @Api.ShelleyEra addr of
         AddressInEra (ShelleyAddressInEra _) a -> serialiseAddress a
-        AddressInEra ByronAddressInAnyEra a -> serialiseAddress a
+        AddressInEra ByronAddressInAnyEra    a -> serialiseAddress a
 
 assertObject :: HasCallStack => Value -> Object
 assertObject = \case
