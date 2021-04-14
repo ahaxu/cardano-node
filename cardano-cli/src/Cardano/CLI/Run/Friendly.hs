@@ -18,12 +18,11 @@ import qualified Data.Map.Strict as Map
 import           Data.Yaml (array)
 import           Data.Yaml.Pretty (defConfig, encodePretty, setConfCompare)
 
-import           Cardano.Api as Api (AddressInEra (..),
-                   AddressTypeInEra (ByronAddressInAnyEra, ShelleyAddressInEra), CardanoEra,
+import           Cardano.Api as Api (CardanoEra,
                    ShelleyBasedEra (ShelleyBasedEraAllegra, ShelleyBasedEraMary, ShelleyBasedEraShelley),
                    ShelleyEra, TxBody, serialiseAddress)
 import           Cardano.Api.Byron (TxBody (ByronTxBody))
-import           Cardano.Api.Shelley (TxBody (ShelleyTxBody), fromShelleyAddr)
+import           Cardano.Api.Shelley (TxBody (ShelleyTxBody), fromShelleyAddr, fromShelleyStakeAddr)
 import           Cardano.Binary (Annotated)
 import qualified Cardano.Chain.UTxO as Byron
 import           Cardano.Ledger.Shelley as Ledger (ShelleyEra)
@@ -144,10 +143,7 @@ friendlyWithdrawalsShelley (Shelley.Wdrl withdrawals) =
       HashMap.insert "amount" (toJSON amount) $
       assertObject $ toJSON addr
     | (addr, amount) <- Map.assocs withdrawals
-    , let addressBech32 = serialiseAddress addr
-            -- case fromShelleyAddr @Api.ShelleyEra addr of
-            --   AddressInEra (ShelleyAddressInEra _) a -> serialiseAddress a
-            --   AddressInEra ByronAddressInAnyEra    a -> serialiseAddress a
+    , let addressBech32 = serialiseAddress $ fromShelleyStakeAddr addr
     ]
 
 friendlyTxOutShelley :: TxOut (Ledger.ShelleyEra StandardCrypto) -> Value
@@ -175,10 +171,7 @@ friendlyAddress addr =
       AddrBootstrap _ ->
         ["bootstrap address" .= object ["Bech32" .= String addressBech32]]
   where
-    addressBech32 =
-      case fromShelleyAddr @Api.ShelleyEra addr of
-        AddressInEra (ShelleyAddressInEra _) a -> serialiseAddress a
-        AddressInEra ByronAddressInAnyEra    a -> serialiseAddress a
+    addressBech32 = serialiseAddress $ fromShelleyAddr @Api.ShelleyEra addr
 
 assertObject :: HasCallStack => Value -> Object
 assertObject = \case

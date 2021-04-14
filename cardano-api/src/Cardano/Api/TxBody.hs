@@ -5,6 +5,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -19,6 +20,7 @@ module Cardano.Api.TxBody (
 
     -- * Transaction bodies
     TxBody(..),
+    getTransactionBodyContent,
     makeTransactionBody,
     TxBodyContent(..),
     TxBodyError(..),
@@ -1017,6 +1019,18 @@ makeTransactionBody =
       ShelleyBasedEra era -> makeShelleyTransactionBody era
 
 
+getTransactionBodyContent :: TxBody era -> TxBodyContent era
+getTransactionBodyContent = \case
+  ByronTxBody body ->
+    getByronTxBodyContent body
+  ShelleyTxBody ShelleyBasedEraShelley body aux ->
+    getShelleyTxBodyContent body aux
+  ShelleyTxBody ShelleyBasedEraAllegra body aux ->
+    getAllegraTxBodyContent body aux
+  ShelleyTxBody ShelleyBasedEraMary body aux ->
+    getMaryTxBodyContent body aux
+
+
 makeByronTransactionBody :: TxBodyContent ByronEra
                          -> Either (TxBodyError ByronEra) (TxBody ByronEra)
 makeByronTransactionBody TxBodyContent { txIns, txOuts } = do
@@ -1048,6 +1062,12 @@ makeByronTransactionBody TxBodyContent { txIns, txOuts } = do
     classifyRangeError
       (TxOut (AddressInEra (ShelleyAddressInEra era) ShelleyAddress{})
              _) = case era of {}
+
+
+getByronTxBodyContent :: Annotated Byron.Tx ByteString
+                      -> TxBodyContent ByronEra
+getByronTxBodyContent = undefined
+
 
 makeShelleyTransactionBody :: ShelleyBasedEra era
                            -> TxBodyContent era
@@ -1252,6 +1272,24 @@ makeShelleyTransactionBody era@ShelleyBasedEraMary
         ss = case txAuxScripts of
                TxAuxScriptsNone   -> []
                TxAuxScripts _ ss' -> ss'
+
+
+getShelleyTxBodyContent :: Shelley.TxBody era
+                        -> Maybe (Shelley.Metadata aux)
+                        -> TxBodyContent ShelleyEra
+getShelleyTxBodyContent = undefined
+
+
+getAllegraTxBodyContent :: txbody
+                        -> aux
+                        -> TxBodyContent AllegraEra
+getAllegraTxBodyContent = undefined
+
+
+getMaryTxBodyContent  :: txbody
+                      -> aux
+                      -> TxBodyContent MaryEra
+getMaryTxBodyContent = undefined
 
 
 toShelleyWithdrawal :: [(StakeAddress, Lovelace)] -> Shelley.Wdrl StandardCrypto
