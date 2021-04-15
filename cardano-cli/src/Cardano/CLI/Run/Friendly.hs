@@ -24,11 +24,12 @@ import           Cardano.Api as Api (AddressInEra (..),
                    IsCardanoEra (cardanoEra),
                    ShelleyBasedEra (ShelleyBasedEraAllegra, ShelleyBasedEraMary, ShelleyBasedEraShelley),
                    ShelleyEra, TxBody, TxBodyContent (..), TxCertificates (..), TxFee (..),
-                   TxMintValue (..), TxOut (..), TxOutValue (..), TxUpdateProposal (..),
-                   TxValidityLowerBound (..), TxValidityUpperBound (..), TxWithdrawals (..),
-                   auxScriptsSupportedInEra, certificatesSupportedInEra, displayError,
-                   getTransactionBodyContent, multiAssetSupportedInEra, serialiseAddress,
-                   serialiseAddressForTxOut, txMetadataSupportedInEra, updateProposalSupportedInEra,
+                   TxMetadata (..), TxMetadataInEra (..), TxMetadataValue (..), TxMintValue (..),
+                   TxOut (..), TxOutValue (..), TxUpdateProposal (..), TxValidityLowerBound (..),
+                   TxValidityUpperBound (..), TxWithdrawals (..), auxScriptsSupportedInEra,
+                   certificatesSupportedInEra, displayError, getTransactionBodyContent,
+                   multiAssetSupportedInEra, serialiseAddress, serialiseAddressForTxOut,
+                   txMetadataSupportedInEra, updateProposalSupportedInEra,
                    validityLowerBoundSupportedInEra, validityUpperBoundSupportedInEra,
                    withdrawalsSupportedInEra)
 import           Cardano.Api.Byron (Lovelace (..), TxBody (ByronTxBody))
@@ -77,6 +78,9 @@ friendlyTxBody txbody =
             ]
         ++  [ "certificates" .= friendlyCertificates txCertificates
             | Just _ <- [certificatesSupportedInEra era]
+            ]
+        ++  [ "metadata" .= friendlyMetadata txMetadata
+            | Just _ <- [txMetadataSupportedInEra era]
             ]
         ++  [ "mint" .= friendlyMintValue txMintValue
             | Right _ <- [multiAssetSupportedInEra era]
@@ -197,3 +201,13 @@ friendlyTxOutValue :: TxOutValue era -> Value
 friendlyTxOutValue = \case
   TxOutAdaOnly _ lovelace -> friendlyLovelace lovelace
   TxOutValue _ multiasset -> toJSON multiasset
+
+friendlyMetadata :: TxMetadataInEra era -> Value
+friendlyMetadata = \case
+  TxMetadataNone                   -> Null
+  TxMetadataInEra _ (TxMetadata m) -> toJSON $ friendlyMetadataValue <$> m
+
+friendlyMetadataValue :: TxMetadataValue -> Value
+friendlyMetadataValue = \case
+  TxMetaNumber int  -> toJSON int
+  TxMetaText   text -> toJSON text
