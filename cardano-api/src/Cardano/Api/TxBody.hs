@@ -1270,14 +1270,62 @@ makeShelleyTransactionBody era@ShelleyBasedEraMary
                TxAuxScriptsNone   -> []
                TxAuxScripts _ ss' -> ss'
 
-
-getShelleyTxBodyContent ::  Shelley.TxBody era
-                        ->  Maybe (Shelley.Metadata aux)
-                        ->  Either
-                              (TxBodyError ShelleyEra)
-                              (TxBodyContent ShelleyEra)
-getShelleyTxBodyContent = undefined
-
+getShelleyTxBodyContent :: Shelley.TxBody era
+                        -> Maybe (Shelley.Metadata aux)
+                        -> TxBodyContent ShelleyEra
+getShelleyTxBodyContent body auxData = do
+  guard (Shelley._mdHash body == adHash') ?! TxBodyAuxDataHashInvalidError
+  pure
+    TxBodyContent
+      { txIns = fromShelleyTxIn <$> toList (Shelley._inputs body)
+      , txOuts
+      , txFee
+      , txValidityRange
+      , txMetadata
+      , txAuxScripts = TxAuxScriptsNone
+      , txWithdrawals
+      , txCertificates
+      , txUpdateProposal
+      , txMintValue = TxMintNone
+      }
+  where
+    adHash' =
+      maybeToStrictMaybe $ Ledger.hashAuxiliaryData @StandardShelley <$> auxData
+    txOuts = fromTxOut ShelleyBasedEraShelley <$> toList (Shelley._outputs body)
+    txFee =
+      TxFeeExplicit TxFeesExplicitInShelleyEra $
+      fromShelleyLovelace $ Shelley._txfee body
+    txValidityRange =
+      ( TxValidityNoLowerBound
+      , TxValidityUpperBound ValidityUpperBoundInShelleyEra $ Shelley._ttl body
+      )
+    txMetadata =
+      case auxData of
+        Nothing -> TxMetadataNone
+        Just s ->
+          let ms = fromShelleyAuxiliaryData s
+          in  if null ms then
+                TxMetadataNone
+              else
+                TxMetadataInEra TxMetadataInShelleyEra (TxMetadata ms)
+    withdrawals = Shelley._wdrls body
+    txWithdrawals
+      | null withdrawals = TxWithdrawalsNone
+      | otherwise =
+          TxWithdrawals WithdrawalsInShelleyEra $
+          fromShelleyWithdrawal withdrawals
+    certificates = Shelley._certs body
+    txCertificates
+      | null certificates = TxCertificatesNone
+      | otherwise =
+          TxCertificates CertificatesInShelleyEra $
+          map fromShelleyCertificate $
+          toList certificates
+    txUpdateProposal =
+      case Shelley._txUpdate body of
+        SNothing -> TxUpdateProposalNone
+        SJust p ->
+          TxUpdateProposal UpdateProposalInShelleyEra $ fromShelleyUpdate p
 
 getAllegraTxBodyContent ::  ShelleyMA.TxBody (ShelleyLedgerEra AllegraEra)
                         ->  Maybe
@@ -1451,6 +1499,10 @@ toShelleyAuxiliaryData :: Map Word64 TxMetadataValue
 toShelleyAuxiliaryData m =
     Shelley.Metadata
       (toShelleyMetadata m)
+
+fromShelleyAuxiliaryData  :: Ledger.AuxiliaryData StandardShelley
+                          -> Map Word64 TxMetadataValue
+fromShelleyAuxiliaryData (Shelley.Metadata m) = fromShelleyMetadata m
 
 -- | In the Allegra and Mary eras the auxiliary data consists of the tx metadata
 -- and the axiliary scripts.

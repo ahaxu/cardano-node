@@ -210,4 +210,5 @@ friendlyMetadata = \case
 friendlyMetadataValue :: TxMetadataValue -> Value
 friendlyMetadataValue = \case
   TxMetaNumber int  -> toJSON int
+  -- TxMetaBytes
   TxMetaText   text -> toJSON text
