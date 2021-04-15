@@ -32,6 +32,8 @@ module Cardano.Api.Script (
     WitCtxTxIn, WitCtxMint, WitCtxStake,
     ScriptWitness(..),
     ScriptExecutionUnits(..),
+    Redeemer(..),
+    fromScriptExecutionUnits,
     Witness(..),
     KeyWitnessInCtx(..),
     ScriptWitnessInCtx(..),
@@ -99,6 +101,7 @@ import           Cardano.Slotting.Slot (SlotNo)
 
 import qualified Cardano.Ledger.Core as Ledger
 
+import qualified Cardano.Ledger.Alonzo.Data as Alonzo
 import qualified Cardano.Ledger.Alonzo.Scripts as Alonzo
 import qualified Cardano.Ledger.ShelleyMA.Timelocks as Timelock
 import           Ouroboros.Consensus.Shelley.Eras (StandardCrypto)
@@ -687,6 +690,7 @@ data ScriptWitness witctx era where
                          -> PlutusScriptVersion  lang
                          -> PlutusScript         lang
                          -> ScriptExecutionUnits
+                         -> Redeemer era
                          -> ScriptWitness witctx era
 
 deriving instance Show (ScriptWitness witctx era)
@@ -700,14 +704,15 @@ instance Eq (ScriptWitness witctx era) where
         Nothing   -> False
         Just Refl -> version == version' && script == script'
 
-    (==) (PlutusScriptWitness langInEra  version  script execUnits)
-         (PlutusScriptWitness langInEra' version' script' execUnits') =
+    (==) (PlutusScriptWitness langInEra  version  script execUnits redeemer)
+         (PlutusScriptWitness langInEra' version' script' execUnits' redeemer') =
       case testEquality (languageOfScriptLanguageInEra langInEra)
                         (languageOfScriptLanguageInEra langInEra') of
         Nothing   -> False
         Just Refl ->    version   == version'
                      && script    == script'
                      && execUnits == execUnits'
+                     && redeemer == redeemer'
 
     (==)  _ _ = False
 
@@ -730,6 +735,19 @@ data ExecutionUnitsSupportedInEra era where
 
 deriving instance Show (ExecutionUnitsSupportedInEra era)
 deriving instance Eq (ExecutionUnitsSupportedInEra era)
+
+toScriptExecutionUnits :: Alonzo.ExUnits -> ScriptExecutionUnits
+toScriptExecutionUnits (Alonzo.ExUnits mMem mSteps) = ScriptExecutionUnits mMem mSteps
+
+fromScriptExecutionUnits :: ScriptExecutionUnits -> Alonzo.ExUnits
+fromScriptExecutionUnits (ScriptExecutionUnits mMem mSteps) = Alonzo.ExUnits mMem mSteps
+
+data Redeemer era where
+  Redeemer :: Alonzo.Data (ShelleyLedgerEra era) -> Redeemer era
+
+deriving instance Show (Redeemer era)
+deriving instance Eq (Redeemer era)
+
 
 -- ----------------------------------------------------------------------------
 -- The kind of witness to use, key (signature) or script

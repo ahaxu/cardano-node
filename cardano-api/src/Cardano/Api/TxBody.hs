@@ -112,7 +112,7 @@ import           Data.Aeson.Types (ToJSONKey (..), toJSONKeyText)
 import           Data.Bifunctor (first)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LBS
-import           Data.List (intercalate)
+import           Data.List (elemIndex, findIndex, intercalate)
 import qualified Data.List.NonEmpty as NonEmpty
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -141,6 +141,7 @@ import qualified Cardano.Crypto.Hashing as Byron
 
 import qualified Cardano.Ledger.Alonzo as Alonzo
 import qualified Cardano.Ledger.Alonzo.Language as Alonzo
+import qualified Cardano.Ledger.Alonzo.Scripts as Alonzo
 import qualified Cardano.Ledger.Alonzo.Tx as Alonzo
 import qualified Cardano.Ledger.Alonzo.TxBody as Alonzo
 import qualified Cardano.Ledger.Alonzo.TxWitness as Alonzo
@@ -285,15 +286,16 @@ makeTxWitnessPPDataHash
   => ShelleyBasedEra era
   -> ProtocolParameters era
   -> Set Alonzo.Language
-  -> Map Alonzo.RdmrPtr (Alonzo.Data ledgerera)
+  -> Map Alonzo.RdmrPtr (Alonzo.Data ledgerera, Alonzo.ExUnits)
     -- Should be: Map Alonzo.RdmrPtr (Alonzo.Data ledgerera, ExUnits)
   -> StrictMaybe (Alonzo.WitnessPPDataHash (Ledger.Crypto ledgerera))
-makeTxWitnessPPDataHash sbe@ShelleyBasedEraAlonzo pParams langs rMap =
+makeTxWitnessPPDataHash sbe@ShelleyBasedEraAlonzo pParams langs _rMap =
   maybeToStrictMaybe
     $ Alonzo.hashWitnessPPData
         (toShelleyPParams sbe  pParams)
         langs
-        rMap
+        (error "rMap")
+        -- TODO: Consensus needs to update to latest ledger specs
 makeTxWitnessPPDataHash _ _ _ _ = SNothing
 
 instance ToJSON TxIn where
@@ -1509,7 +1511,7 @@ makeShelleyTransactionBody era@ShelleyBasedEraAlonzo
                          | (txIn, BuildTxWith (KeyWitness KeyWitnessForPlutusFee)) <- txIns]
         spendingInputs = [txIn
                          | (txIn, buildWith) <- txIns
-                         , buildWith /= BuildTxWith (KeyWitness KeyWitnessForPlutusFee)]
+                         , buildWith /= BuildTxWith (KeyWitness KeyWitnessForPlutusFee)] --TODO: Only PLUTUS scripts allowed. We current don't filter them out here
     case txMetadata of
       TxMetadataNone      -> return ()
       TxMetadataInEra _ m -> validateTxMetadata m ?!. TxBodyMetadataError
@@ -1551,7 +1553,8 @@ makeShelleyTransactionBody era@ShelleyBasedEraAlonzo
              TxWitnessPPDataHash _ mTxWitPPDataHash -> mTxWitPPDataHash)
           (maybeToStrictMaybe $ hashedTxAuxData txAuxData)
         )
-        []
+        [] -- All Scripts have to do here including redeemers + exunits for plutus scripts
+           -- (map toShelleySimpleScript (collectTxBodySimpleScripts txbodycontent))
         txAuxData
         Nothing
         -- _txnetworkid = SNothing
@@ -1574,6 +1577,135 @@ makeShelleyTransactionBody era@ShelleyBasedEraAlonzo
        ss = case txAuxScripts of
               TxAuxScriptsNone   -> []
               TxAuxScripts _ ss' -> ss'
+
+
+-- TODO: Better name?
+-- | To construct our redeemer pointer map, we need
+--the thing the redeemer point will point to, the redeeemer
+--and the Plutus script execution units budget.
+extractRedeemerPtrIngredients
+  :: ShelleyLedgerEra era ~ ledgerera
+  => Map a (Witness witxtc era)
+  -> [(a, Alonzo.Data ledgerera, Alonzo.ExUnits)]
+extractRedeemerPtrIngredients m =
+  [ (target, redeemer, fromScriptExecutionUnits exunits)
+  | (target, ScriptWitness ScriptWitnessForMinting (PlutusScriptWitness _ _ _ exunits (Redeemer redeemer)) )
+       <- Map.toList m
+  ]
+
+certifyingRedeemerPtr
+ :: ShelleyLedgerEra era ~ ledgerera
+ => BuildTxWith build (Map StakeCredential (Witness WitCtxStake era))
+ -> [Certificate]
+ -> [(Alonzo.RdmrPtr, Alonzo.Data ledgerera, Alonzo.ExUnits)]
+certifyingRedeemerPtr (BuildTxWith sCredMap) certs = do
+  let ingreds = extractRedeemerPtrIngredients sCredMap
+  map (\(sCred, redeemer, exunits) -> (createRdmrPtr certs sCred, redeemer, exunits)) ingreds
+ where
+   createRdmrPtr :: [Certificate] -> StakeCredential -> Alonzo.RdmrPtr
+   createRdmrPtr certs' sCred =
+     case findIndex (onCert sCred) certs' of
+       Just index ->
+         case intToWord64 index of
+             Right w64 -> Alonzo.RdmrPtr Alonzo.Cert w64
+             Left err ->
+               error $ "certifyingRedeemerPtr: Error occurred while constructing a \
+                       \certifying redeemer pointer: " <> err
+       Nothing -> error $ "certifyingRedeemerPtr: Script witness not provided\
+                          \ for stake credential: " <> show sCred
+   onCert :: StakeCredential -> Certificate -> Bool
+   onCert sCred (StakeAddressDeregistrationCertificate target) = sCred == target
+   onCert sCred (StakeAddressDelegationCertificate target _) = sCred == target
+   onCert _ _ = False
+certifyingRedeemerPtr _ _ = []
+
+-- TODO: Definitely want a property test that the constructed redeemers point to the
+--correct thing in the final tx.
+mintingRedeemerPtr
+  :: forall era build ledgerera. ShelleyLedgerEra era ~ ledgerera
+  => BuildTxWith build (Map PolicyId (Witness WitCtxMint era))
+  -> Value
+  -> [(Alonzo.RdmrPtr, Alonzo.Data ledgerera, Alonzo.ExUnits)]
+mintingRedeemerPtr (BuildTxWith polWitMap) val = do
+  -- get policyId, redeemer and exunits
+  let polRedExUnits = extractRedeemerPtrIngredients polWitMap
+  map (\(pid, redeemer, exunits) -> (createRdmrPtr val pid, redeemer, exunits)) polRedExUnits
+ where
+   selectPolId :: PolicyId -> (AssetId, Quantity) -> Bool
+   selectPolId p (AssetId pid' _, _) = p == pid'
+   selectPolId _ _ = False
+
+   createRdmrPtr :: Value -> PolicyId -> Alonzo.RdmrPtr
+   createRdmrPtr val' pid  =
+     case findIndex (selectPolId pid) $ valueToList val' of
+         Just index -> do
+           case intToWord64 index of
+             Right w64 -> Alonzo.RdmrPtr Alonzo.Mint w64
+             Left err ->
+               error $ "spendingRedeemerPtr: Error occurred while constructing a \
+                       \spending redeemer pointer: " <> err
+         Nothing -> error $ "mintingRedeemerPtr: Script witness not provided.\
+                          \ PolicyId: " <> show pid
+mintingRedeemerPtr _ _  = []
+
+intToWord64 :: Int -> Either String Word64
+intToWord64 int = do
+       let maxW64 = fromIntegral (maxBound :: Word64) :: Int
+       if maxW64 > int
+       then Left $ "Word64 bound exceeded " <> show int
+       else Right $ fromIntegral int
+
+spendingRedeemerPtr
+  :: forall era ledgerera. ShelleyLedgerEra era ~ ledgerera
+  => [(TxIn, BuildTxWith BuildTx (Witness WitCtxTxIn era))]
+  -> [(Alonzo.RdmrPtr, Alonzo.Data ledgerera, Alonzo.ExUnits)]
+spendingRedeemerPtr txins = do
+  let rdmrPtrIngreds = extractRedeemerIngreds txins
+  map (\(txin, redeemer, exunits) -> (createRdmrPtr txin txins,redeemer, exunits)) rdmrPtrIngreds
+ where
+   extractRedeemerIngreds
+     :: [(TxIn, BuildTxWith BuildTx (Witness WitCtxTxIn era))]
+     -> [(TxIn, Alonzo.Data ledgerera, Alonzo.ExUnits)]
+   extractRedeemerIngreds txins' =
+     [ (txin, redeemer', fromScriptExecutionUnits exunits')
+     | (txin, BuildTxWith (ScriptWitness ScriptWitnessForSpending (PlutusScriptWitness _ _ _ exunits' (Redeemer redeemer')))) <- txins'
+     ]
+
+   createRdmrPtr :: TxIn -> [(TxIn, BuildTxWith BuildTx (Witness WitCtxTxIn era))] -> Alonzo.RdmrPtr
+   createRdmrPtr txin' txins' =
+    case findIndex (onTxIn txin') txins' of
+      Just index ->
+        case intToWord64 index of
+          Right w64 -> Alonzo.RdmrPtr Alonzo.Spend w64
+          Left err ->
+            error $ "spendingRedeemerPtr: Error occurred while constructing a \
+                    \spending redeemer pointer: " <> err
+      Nothing ->
+        error $ "spendingRedeemerPtr: A Plutus script witness has not been \
+                \provided for txin: " <> show txin'
+
+   onTxIn :: TxIn -> (TxIn, BuildTxWith BuildTx (Witness WitCtxTxIn era)) -> Bool
+   onTxIn txin (txin',_) = txin == txin'
+rewardingRedeemerPtr
+  ::  ShelleyLedgerEra era ~ ledgerera
+  => (StakeAddress, Lovelace, BuildTxWith BuildTx (Witness WitCtxStake era))
+  -> [(StakeAddress, Lovelace, BuildTxWith BuildTx (Witness WitCtxStake era))]
+  -> (Alonzo.RdmrPtr, (Alonzo.Data ledgerera, Alonzo.ExUnits))
+rewardingRedeemerPtr
+  sWithDrawal@( _, _
+              , BuildTxWith (ScriptWitness ScriptWitnessForStakeAddr (PlutusScriptWitness _ _ _ exunits (Redeemer redeemer)))) withdrwls =
+  case elemIndex sWithDrawal withdrwls of
+    Just index ->
+      case intToWord64 index of
+        Right w64 -> (Alonzo.RdmrPtr Alonzo.Rewrd w64, (redeemer, fromScriptExecutionUnits exunits))
+        Left err ->
+          error $ "rewardingRedeemerPtr: Error occurred while constructing a \
+                    \reward redeemer pointer: " <> err
+    Nothing ->
+      error $ "rewardingRedeemerPtr: Plutus locked reward withdrawal: " <> show sWithDrawal <> " was not found in\
+            \ the transaction's inputs: " <> show withdrwls
+rewardingRedeemerPtr txin _ =
+  error $ "rewardingRedeemerPtr:  Withdrawal is not witnesses by a plutus script: " <> show txin
 
 data SimpleScriptInEra era where
      SimpleScriptInEra :: ScriptLanguageInEra lang era

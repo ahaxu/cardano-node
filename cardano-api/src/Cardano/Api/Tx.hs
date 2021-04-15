@@ -565,6 +565,7 @@ makeSignedTransaction witnesses (ShelleyTxBody era txbody txscripts txmetadata i
            Nothing -> error "makeAlonzoSignedTransaction: isValidating flag was not specified")
         (maybeToStrictMaybe txmetadata)
 
+
 makeByronKeyWitness :: forall key.
                        IsByronKey key
                     => NetworkId
