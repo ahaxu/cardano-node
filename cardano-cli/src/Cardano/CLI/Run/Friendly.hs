@@ -23,25 +23,18 @@ import           Cardano.Api as Api (AddressInEra (..),
                    AddressTypeInEra (ByronAddressInAnyEra, ShelleyAddressInEra), CardanoEra,
                    IsCardanoEra (cardanoEra),
                    ShelleyBasedEra (ShelleyBasedEraAllegra, ShelleyBasedEraMary, ShelleyBasedEraShelley),
-                   ShelleyEra, TxBody, TxBodyContent (..), TxCertificates (..), TxFee (..),
-                   TxMetadata (..), TxMetadataInEra (..), TxMetadataValue (..), TxMintValue (..),
-                   TxOut (..), TxOutValue (..), TxUpdateProposal (..), TxValidityLowerBound (..),
-                   TxValidityUpperBound (..), TxWithdrawals (..), auxScriptsSupportedInEra,
-                   certificatesSupportedInEra, displayError, getTransactionBodyContent,
-                   multiAssetSupportedInEra, serialiseAddress, serialiseAddressForTxOut,
-                   txMetadataSupportedInEra, updateProposalSupportedInEra,
+                   ShelleyEra, TxAuxScripts (..), TxBody, TxBodyContent (..), TxCertificates (..),
+                   TxFee (..), TxMetadata (..), TxMetadataInEra (..), TxMetadataValue (..),
+                   TxMintValue (..), TxOut (..), TxOutValue (..), TxUpdateProposal (..),
+                   TxValidityLowerBound (..), TxValidityUpperBound (..), TxWithdrawals (..),
+                   auxScriptsSupportedInEra, certificatesSupportedInEra, displayError,
+                   getTransactionBodyContent, multiAssetSupportedInEra, serialiseAddress,
+                   serialiseAddressForTxOut, txMetadataSupportedInEra, updateProposalSupportedInEra,
                    validityLowerBoundSupportedInEra, validityUpperBoundSupportedInEra,
                    withdrawalsSupportedInEra)
-import           Cardano.Api.Byron (Lovelace (..), TxBody (ByronTxBody))
+import           Cardano.Api.Byron (Lovelace (..))
 import           Cardano.Api.Shelley (Address (ShelleyAddress), StakeAddress (..),
                    TxBody (ShelleyTxBody), fromShelleyAddr, fromShelleyStakeAddr)
-import           Cardano.Binary (Annotated)
-import qualified Cardano.Chain.UTxO as Byron
-import           Cardano.Ledger.Shelley as Ledger (ShelleyEra)
-import           Cardano.Ledger.ShelleyMA (MaryOrAllegra (Allegra, Mary), ShelleyMAEra)
-import qualified Cardano.Ledger.ShelleyMA.TxBody as ShelleyMA
-import           Ouroboros.Consensus.Shelley.Protocol.Crypto (StandardCrypto)
-import           Shelley.Spec.Ledger.API (Addr (..))
 import qualified Shelley.Spec.Ledger.API as Shelley
 
 import           Cardano.CLI.Helpers (textShow)
@@ -75,6 +68,9 @@ friendlyTxBody txbody =
             , "fee"     .= friendlyFee txFee
             , "inputs"  .= txIns
             , "outputs" .= map friendlyTxOut txOuts
+            ]
+        ++  [ "auxiliary scripts" .= friendlyAuxScripts txAuxScripts
+            | Just _ <- [auxScriptsSupportedInEra era]
             ]
         ++  [ "certificates" .= friendlyCertificates txCertificates
             | Just _ <- [certificatesSupportedInEra era]
@@ -212,3 +208,7 @@ friendlyMetadataValue = \case
   TxMetaNumber int  -> toJSON int
   -- TxMetaBytes
   TxMetaText   text -> toJSON text
+
+friendlyAuxScripts :: TxAuxScripts era -> Value
+friendlyAuxScripts = \case
+  TxAuxScriptsNone -> Null

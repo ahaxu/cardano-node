@@ -1270,9 +1270,12 @@ makeShelleyTransactionBody era@ShelleyBasedEraMary
                TxAuxScriptsNone   -> []
                TxAuxScripts _ ss' -> ss'
 
-getShelleyTxBodyContent :: Shelley.TxBody era
-                        -> Maybe (Shelley.Metadata aux)
-                        -> TxBodyContent ShelleyEra
+getShelleyTxBodyContent ::  Shelley.TxBody (ShelleyLedgerEra ShelleyEra)
+                        ->  Maybe
+                              (Shelley.Metadata (ShelleyLedgerEra ShelleyEra))
+                        ->  Either
+                              (TxBodyError ShelleyEra)
+                              (TxBodyContent ShelleyEra)
 getShelleyTxBodyContent body auxData = do
   guard (Shelley._mdHash body == adHash') ?! TxBodyAuxDataHashInvalidError
   pure
@@ -1308,7 +1311,7 @@ getShelleyTxBodyContent body auxData = do
                 TxMetadataNone
               else
                 TxMetadataInEra TxMetadataInShelleyEra (TxMetadata ms)
-    withdrawals = Shelley._wdrls body
+    Shelley.Wdrl withdrawals = Shelley._wdrls body
     txWithdrawals
       | null withdrawals = TxWithdrawalsNone
       | otherwise =
