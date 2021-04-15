@@ -129,6 +129,7 @@ friendlyTxOut txout@(TxOut addr amount) =
 
 friendlyStakeReference :: Shelley.StakeReference crypto -> Value
 friendlyStakeReference = \case
+  Shelley.StakeRefBase cred -> toJSON cred
   Shelley.StakeRefNull -> Null
 
 assertObject :: HasCallStack => Value -> Object
