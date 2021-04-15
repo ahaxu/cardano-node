@@ -20,8 +20,8 @@ import           Data.Yaml (array)
 import           Data.Yaml.Pretty (defConfig, encodePretty, setConfCompare)
 
 import           Cardano.Api as Api (AddressInEra (..),
-                   AddressTypeInEra (ByronAddressInAnyEra, ShelleyAddressInEra), CardanoEra,
-                   IsCardanoEra (cardanoEra),
+                   AddressTypeInEra (ByronAddressInAnyEra, ShelleyAddressInEra),
+                   CardanoEra (ShelleyEra), IsCardanoEra (cardanoEra),
                    ShelleyBasedEra (ShelleyBasedEraAllegra, ShelleyBasedEraMary, ShelleyBasedEraShelley),
                    ShelleyEra, TxAuxScripts (..), TxBody, TxBodyContent (..), TxCertificates (..),
                    TxFee (..), TxMetadata (..), TxMetadataInEra (..), TxMetadataValue (..),
@@ -54,7 +54,7 @@ friendlyTxBody txbody =
         { txIns
         , txOuts
         , txFee
-        , txValidityRange
+        , txValidityRange = txValidityRange@(_, upperBound)
         , txMetadata
         , txAuxScripts
         , txWithdrawals
@@ -84,12 +84,18 @@ friendlyTxBody txbody =
         ++  [ "update proposal" .= friendlyUpdateProposal txUpdateProposal
             | Just _ <- [updateProposalSupportedInEra era]
             ]
-        ++  [ "validity range" .= friendlyValidityRange txValidityRange
-            | Just _ <-
-                [ validityLowerBoundSupportedInEra era *>
-                  validityUpperBoundSupportedInEra era
-                ]
-            ]
+        ++  case era of
+              ShelleyEra -> ["time to live" .= ttl] where
+                TxValidityUpperBound _ ttl = upperBound
+              _ ->
+                case
+                  ( validityLowerBoundSupportedInEra era
+                  , validityUpperBoundSupportedInEra era
+                  )
+                of
+                  (Nothing, Nothing) -> []
+                  _ ->
+                    ["validity range" .= friendlyValidityRange txValidityRange]
         ++  [ "withdrawals" .= friendlyWithdrawals txWithdrawals
             | Just _ <- [withdrawalsSupportedInEra era]
             ]
@@ -126,7 +132,7 @@ friendlyWithdrawals (TxWithdrawals _ withdrawals) =
         [ "address"     .= serialiseAddress addr
         , "network"     .= net
         , "credential"  .= cred
-        , "amount"      .= amount
+        , "amount"      .= friendlyLovelace amount
         ]
     | (addr@(StakeAddress net cred), amount) <- withdrawals
     ]
