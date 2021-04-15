@@ -43,6 +43,7 @@ module Cardano.Api.TxBody (
     -- * Transaction outputs
     TxOut(..),
     TxOutValue(..),
+    serialiseAddressForTxOut,
 
     -- * Other transaction body types
     TxFee(..),
@@ -289,32 +290,18 @@ data TxOut era
   deriving Generic
 
 instance IsCardanoEra era => ToJSON (TxOut era) where
-  toJSON (TxOut (AddressInEra addrType addr) val) =
-    case addrType of
-      ByronAddressInAnyEra ->
-        let hexAddr = serialiseToRawBytesHexText addr
-        in object [ "address" .= hexAddr
-                  , "value" .= toJSON val
-                  ]
-      ShelleyAddressInEra sbe ->
-        case sbe of
-          ShelleyBasedEraShelley ->
-            object
-              [ "address" .= serialiseToBech32 addr
-              , "value" .= toJSON val
-              ]
-          ShelleyBasedEraAllegra ->
-            object
-              [ "address" .= serialiseToBech32 addr
-              , "value" .= toJSON val
-              ]
-          ShelleyBasedEraMary ->
-            object
-              [ "address" .= serialiseToBech32 addr
-              , "value" .= toJSON val
-              ]
+  toJSON (TxOut addr val) =
+    object ["address" .= serialiseAddressForTxOut addr, "value" .= toJSON val]
 
-
+serialiseAddressForTxOut :: AddressInEra era -> Text
+serialiseAddressForTxOut (AddressInEra addrType addr) =
+  case addrType of
+    ByronAddressInAnyEra -> serialiseToRawBytesHexText addr
+    ShelleyAddressInEra sbe ->
+      case sbe of
+        ShelleyBasedEraShelley -> serialiseToBech32 addr
+        ShelleyBasedEraAllegra -> serialiseToBech32 addr
+        ShelleyBasedEraMary    -> serialiseToBech32 addr
 
 deriving instance Eq   (TxOut era)
 deriving instance Show (TxOut era)
@@ -992,6 +979,7 @@ data TxBodyError era =
      | TxBodyMetadataError [(Word64, TxMetadataRangeError)]
      | TxBodyMintAdaError
      | TxBodyAuxDataHashInvalidError
+     | TxBodyMintBeforeMaryError
      deriving Show
 
 instance Error (TxBodyError era) where
@@ -1012,6 +1000,8 @@ instance Error (TxBodyError era) where
         | (k, err) <- errs ]
     displayError TxBodyMintAdaError =
       "Transaction cannot mint ada, only non-ada assets"
+    displayError TxBodyMintBeforeMaryError =
+      "Transaction can mint in Mary era or later"
     displayError TxBodyAuxDataHashInvalidError =
       "Auxiliary data hash is invalid"
 
@@ -1289,13 +1279,83 @@ getShelleyTxBodyContent ::  Shelley.TxBody era
 getShelleyTxBodyContent = undefined
 
 
-getAllegraTxBodyContent ::  txbody
-                        ->  aux
+getAllegraTxBodyContent ::  ShelleyMA.TxBody (ShelleyLedgerEra AllegraEra)
+                        ->  Maybe
+                              (ShelleyMA.AuxiliaryData
+                                (ShelleyLedgerEra AllegraEra))
                         ->  Either
                               (TxBodyError AllegraEra)
                               (TxBodyContent AllegraEra)
-getAllegraTxBodyContent = undefined
-
+getAllegraTxBodyContent
+  (ShelleyMA.TxBody
+    inputs
+    outputs
+    certificates
+    (Shelley.Wdrl withdrawals)
+    txfee
+    ShelleyMA.ValidityInterval{invalidBefore, invalidHereafter}
+    update
+    adHash
+    mint)
+  auxData = do
+    guard (adHash == adHash') ?! TxBodyAuxDataHashInvalidError
+    guard (isZero mint) ?! TxBodyMintBeforeMaryError
+    pure
+      TxBodyContent
+        { txIns = fromShelleyTxIn <$> toList inputs
+        , txOuts = fromTxOut ShelleyBasedEraAllegra <$> toList outputs
+        , txFee
+        , txValidityRange
+        , txMetadata
+        , txAuxScripts
+        , txWithdrawals
+        , txCertificates
+        , txUpdateProposal
+        , txMintValue = TxMintNone
+        }
+  where
+    adHash' =
+      maybeToStrictMaybe $
+        Ledger.hashAuxiliaryData @StandardAllegra <$> auxData
+    txFee =
+      TxFeeExplicit TxFeesExplicitInAllegraEra $ fromShelleyLovelace txfee
+    txValidityRange =
+      ( case invalidBefore of
+          SNothing -> TxValidityNoLowerBound
+          SJust s -> TxValidityLowerBound ValidityLowerBoundInAllegraEra s
+      , case invalidHereafter of
+          SNothing -> TxValidityNoUpperBound ValidityNoUpperBoundInAllegraEra
+          SJust s -> TxValidityUpperBound ValidityUpperBoundInAllegraEra s
+      )
+    (txMetadata, txAuxScripts) =
+      case auxData of
+        Nothing -> (TxMetadataNone, TxAuxScriptsNone)
+        Just s ->
+          let (ms, ss) = fromAllegraAuxiliaryData s
+          in  ( if null ms then
+                  TxMetadataNone
+                else
+                  TxMetadataInEra TxMetadataInAllegraEra (TxMetadata ms)
+              , case ss of
+                  [] -> TxAuxScriptsNone
+                  _  -> TxAuxScripts AuxScriptsInAllegraEra ss
+              )
+    txWithdrawals
+      | null withdrawals = TxWithdrawalsNone
+      | otherwise =
+          TxWithdrawals WithdrawalsInAllegraEra $
+          fromShelleyWithdrawal withdrawals
+    txCertificates
+      | null certificates = TxCertificatesNone
+      | otherwise =
+          TxCertificates CertificatesInAllegraEra $
+          map fromShelleyCertificate $
+          toList certificates
+    txUpdateProposal =
+      case update of
+        SNothing -> TxUpdateProposalNone
+        SJust p ->
+          TxUpdateProposal UpdateProposalInAllegraEra $ fromShelleyUpdate p
 
 getMaryTxBodyContent  ::  ShelleyMA.TxBody (ShelleyLedgerEra MaryEra)
                       ->  Maybe
@@ -1329,7 +1389,7 @@ getMaryTxBodyContent
         }
   where
     adHash' =
-      maybeToStrictMaybe (Ledger.hashAuxiliaryData @StandardMary <$> auxData)
+      maybeToStrictMaybe $ Ledger.hashAuxiliaryData @StandardMary <$> auxData
     txFee = TxFeeExplicit TxFeesExplicitInMaryEra $ fromShelleyLovelace txfee
     txValidityRange =
       ( case invalidBefore of
@@ -1408,13 +1468,13 @@ toAllegraAuxiliaryData m ss =
       (toShelleyMetadata m)
       (Seq.fromList (map toShelleyScript ss))
 
--- fromAllegraAuxiliaryData  ::  Ledger.AuxiliaryData
---                                 (ShelleyLedgerEra AllegraEra)
---                           ->  ( Map Word64 TxMetadataValue
---                               , [ScriptInEra AllegraEra]
---                               )
--- fromAllegraAuxiliaryData (ShelleyMA.AuxiliaryData ms ss) =
---   (fromShelleyMetadata ms, fromAllegraScript <$> toList ss)
+fromAllegraAuxiliaryData  ::  Ledger.AuxiliaryData
+                                (ShelleyLedgerEra AllegraEra)
+                          ->  ( Map Word64 TxMetadataValue
+                              , [ScriptInEra AllegraEra]
+                              )
+fromAllegraAuxiliaryData (ShelleyMA.AuxiliaryData ms ss) =
+  (fromShelleyMetadata ms, fromAllegraScript <$> toList ss)
 
 fromMaryAuxiliaryData :: Ledger.AuxiliaryData (ShelleyLedgerEra MaryEra)
                       -> (Map Word64 TxMetadataValue, [ScriptInEra MaryEra])

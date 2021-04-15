@@ -24,9 +24,10 @@ import           Cardano.Api as Api (AddressInEra (..),
                    IsCardanoEra (cardanoEra),
                    ShelleyBasedEra (ShelleyBasedEraAllegra, ShelleyBasedEraMary, ShelleyBasedEraShelley),
                    ShelleyEra, TxBody, TxBodyContent (..), TxCertificates (..), TxFee (..),
-                   TxMintValue (..), TxOut (..), TxUpdateProposal (..), TxValidityLowerBound (..),
-                   TxValidityUpperBound (..), TxWithdrawals (..), displayError,
-                   getTransactionBodyContent, serialiseAddress, validityLowerBoundSupportedInEra,
+                   TxMintValue (..), TxOut (..), TxOutValue (..), TxUpdateProposal (..),
+                   TxValidityLowerBound (..), TxValidityUpperBound (..), TxWithdrawals (..),
+                   displayError, getTransactionBodyContent, serialiseAddress,
+                   serialiseAddressForTxOut, validityLowerBoundSupportedInEra,
                    validityUpperBoundSupportedInEra)
 import           Cardano.Api.Byron (Lovelace (..), TxBody (ByronTxBody))
 import           Cardano.Api.Shelley (Address (ShelleyAddress), StakeAddress (..),
@@ -113,24 +114,30 @@ friendlyWithdrawals (TxWithdrawals _ withdrawals) =
     | (addr@(StakeAddress net cred), amount) <- withdrawals
     ]
 
-friendlyTxOut :: IsCardanoEra era => TxOut era -> Value
-friendlyTxOut txout@(TxOut addr amount) =
-  Object $ addFields $ assertObject $ toJSON txout
+friendlyTxOut :: TxOut era -> Value
+friendlyTxOut (TxOut addr amount) =
+  case addr of
+    AddressInEra ByronAddressInAnyEra _ ->
+      object $ ("address era" .= String "Byron") : common
+    AddressInEra (ShelleyAddressInEra _) (ShelleyAddress net cred stake) ->
+      object $
+        "address era"         .= String "Shelley"             :
+        "network"             .= net                          :
+        "payment credential"  .= cred                         :
+        "stake reference"     .= friendlyStakeReference stake :
+        common
   where
-    addFields =
-      case addr of
-        AddressInEra ByronAddressInAnyEra _ -> addAddressEra "Byron"
-        AddressInEra (ShelleyAddressInEra _) (ShelleyAddress net cred stake) ->
-          addAddressEra "Shelley" .
-          HashMap.insert "network" (toJSON net) .
-          HashMap.insert "payment credential" (toJSON cred) .
-          HashMap.insert "stake reference" (friendlyStakeReference stake)
-    addAddressEra = HashMap.insert ("address era" :: Text)
+    common :: [(Text, Value)]
+    common =
+      [ "address" .= serialiseAddressForTxOut addr
+      , "amount"  .= friendlyTxOutValue amount
+      ]
 
 friendlyStakeReference :: Shelley.StakeReference crypto -> Value
 friendlyStakeReference = \case
   Shelley.StakeRefBase cred -> toJSON cred
   Shelley.StakeRefNull -> Null
+  Shelley.StakeRefPtr ptr -> toJSON ptr
 
 assertObject :: HasCallStack => Value -> Object
 assertObject = \case
@@ -158,10 +165,18 @@ friendlyCertificates = \case
 
 friendlyFee :: TxFee era -> Value
 friendlyFee = \case
-  TxFeeImplicit _                -> "implicit"
-  TxFeeExplicit _ (Lovelace fee) -> String $ textShow fee <> " Lovelace"
+  TxFeeImplicit _     -> "implicit"
+  TxFeeExplicit _ fee -> friendlyLovelace fee
+
+friendlyLovelace :: Lovelace -> Value
+friendlyLovelace (Lovelace value) = String $ textShow value <> " Lovelace"
 
 friendlyMintValue :: TxMintValue era -> Value
 friendlyMintValue = \case
   TxMintNone      -> Null
   TxMintValue _ v -> toJSON v
+
+friendlyTxOutValue :: TxOutValue era -> Value
+friendlyTxOutValue = \case
+  TxOutAdaOnly _ lovelace -> friendlyLovelace lovelace
+  TxOutValue _ multiasset -> toJSON multiasset
