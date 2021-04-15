@@ -98,7 +98,11 @@ golden_view_mary =
         , "--fee", "139"
         , "--invalid-before", "140"
         , "--mint"
-        ,   "142 16979B841A6BA532E87E34748C59D0F3FA416C344755A8BF20C839B9"
+        ,   "42 16979B841A6BA532E87E34748C59D0F3FA416C344755A8BF20C839B9\
+            \ + \
+            \43 A5D48A2659925B8574DA58B66065A61283634E43C7FB4E76AFD0C35A.snow\
+            \ + \
+            \44 16979B841A6BA532E87E34748C59D0F3FA416C344755A8BF20C839B9.sky"
         , "--out-file", transactionBodyFile
         ]
 

@@ -991,6 +991,7 @@ data TxBodyError era =
      | TxBodyOutputOverflow Quantity (TxOut era)
      | TxBodyMetadataError [(Word64, TxMetadataRangeError)]
      | TxBodyMintAdaError
+     | TxBodyAuxDataHashInvalidError
      deriving Show
 
 instance Error (TxBodyError era) where
@@ -1011,7 +1012,8 @@ instance Error (TxBodyError era) where
         | (k, err) <- errs ]
     displayError TxBodyMintAdaError =
       "Transaction cannot mint ada, only non-ada assets"
-
+    displayError TxBodyAuxDataHashInvalidError =
+      "Auxiliary data hash is invalid"
 
 makeTransactionBody :: forall era.
                        IsCardanoEra era
@@ -1023,7 +1025,8 @@ makeTransactionBody =
       ShelleyBasedEra era -> makeShelleyTransactionBody era
 
 
-getTransactionBodyContent :: TxBody era -> TxBodyContent era
+getTransactionBodyContent :: TxBody era
+                          -> Either (TxBodyError era) (TxBodyContent era)
 getTransactionBodyContent = \case
   ByronTxBody body ->
     getByronTxBodyContent body
@@ -1069,7 +1072,7 @@ makeByronTransactionBody TxBodyContent { txIns, txOuts } = do
 
 
 getByronTxBodyContent :: Annotated Byron.Tx ByteString
-                      -> TxBodyContent ByronEra
+                      -> Either (TxBodyError ByronEra) (TxBodyContent ByronEra)
 getByronTxBodyContent = undefined
 
 
@@ -1278,22 +1281,26 @@ makeShelleyTransactionBody era@ShelleyBasedEraMary
                TxAuxScripts _ ss' -> ss'
 
 
-getShelleyTxBodyContent :: Shelley.TxBody era
-                        -> Maybe (Shelley.Metadata aux)
-                        -> TxBodyContent ShelleyEra
+getShelleyTxBodyContent ::  Shelley.TxBody era
+                        ->  Maybe (Shelley.Metadata aux)
+                        ->  Either
+                              (TxBodyError ShelleyEra)
+                              (TxBodyContent ShelleyEra)
 getShelleyTxBodyContent = undefined
 
 
-getAllegraTxBodyContent :: txbody
-                        -> aux
-                        -> TxBodyContent AllegraEra
+getAllegraTxBodyContent ::  txbody
+                        ->  aux
+                        ->  Either
+                              (TxBodyError AllegraEra)
+                              (TxBodyContent AllegraEra)
 getAllegraTxBodyContent = undefined
 
 
 getMaryTxBodyContent  ::  ShelleyMA.TxBody (ShelleyLedgerEra MaryEra)
                       ->  Maybe
                             (ShelleyMA.AuxiliaryData (ShelleyLedgerEra MaryEra))
-                      ->  TxBodyContent MaryEra
+                      ->  Either (TxBodyError MaryEra) (TxBodyContent MaryEra)
 getMaryTxBodyContent
   (ShelleyMA.TxBody
     inputs
@@ -1305,20 +1312,24 @@ getMaryTxBodyContent
     update
     adHash
     mint)
-  aux =
-    TxBodyContent
-      { txIns = fromShelleyTxIn <$> toList inputs
-      , txOuts = fromTxOut ShelleyBasedEraMary <$> toList outputs
-      , txFee
-      , txValidityRange
-      , txMetadata
-      , txAuxScripts
-      , txWithdrawals
-      , txCertificates
-      , txUpdateProposal
-      , txMintValue
-      }
+  auxData = do
+    guard (adHash == adHash') ?! TxBodyAuxDataHashInvalidError
+    pure
+      TxBodyContent
+        { txIns = fromShelleyTxIn <$> toList inputs
+        , txOuts = fromTxOut ShelleyBasedEraMary <$> toList outputs
+        , txFee
+        , txValidityRange
+        , txMetadata
+        , txAuxScripts
+        , txWithdrawals
+        , txCertificates
+        , txUpdateProposal
+        , txMintValue
+        }
   where
+    adHash' =
+      maybeToStrictMaybe (Ledger.hashAuxiliaryData @StandardMary <$> auxData)
     txFee = TxFeeExplicit TxFeesExplicitInMaryEra $ fromShelleyLovelace txfee
     txValidityRange =
       ( case invalidBefore of
@@ -1329,7 +1340,7 @@ getMaryTxBodyContent
           SJust s -> TxValidityUpperBound ValidityUpperBoundInMaryEra s
       )
     (txMetadata, txAuxScripts) =
-      case aux of
+      case auxData of
         Nothing -> (TxMetadataNone, TxAuxScriptsNone)
         Just s ->
           let (ms, ss) = fromMaryAuxiliaryData s
