@@ -18,9 +18,10 @@ import qualified Data.Map.Strict as Map
 import           Data.Yaml (array)
 import           Data.Yaml.Pretty (defConfig, encodePretty, setConfCompare)
 
-import           Cardano.Api as Api (CardanoEra,
+import           Cardano.Api as Api (CardanoEra, IsCardanoEra,
                    ShelleyBasedEra (ShelleyBasedEraAllegra, ShelleyBasedEraMary, ShelleyBasedEraShelley),
-                   ShelleyEra, TxBody, serialiseAddress)
+                   ShelleyEra, TxBody, TxBodyContent (..), getTransactionBodyContent,
+                   serialiseAddress)
 import           Cardano.Api.Byron (TxBody (ByronTxBody))
 import           Cardano.Api.Shelley (TxBody (ShelleyTxBody), fromShelleyAddr, fromShelleyStakeAddr)
 import           Cardano.Binary (Annotated)
@@ -34,23 +35,28 @@ import qualified Shelley.Spec.Ledger.API as Shelley
 
 import           Cardano.CLI.Helpers (textShow)
 
-friendlyTxBodyBS :: CardanoEra era -> Api.TxBody era -> ByteString
+friendlyTxBodyBS
+  :: IsCardanoEra era => CardanoEra era -> Api.TxBody era -> ByteString
 friendlyTxBodyBS era =
   encodePretty (setConfCompare compare defConfig) . friendlyTxBody era
 
-friendlyTxBody :: CardanoEra era -> Api.TxBody era -> Value
+friendlyTxBody :: IsCardanoEra era => CardanoEra era -> Api.TxBody era -> Value
 friendlyTxBody era txbody =
-  Object $
-    HashMap.fromList ["era" .= toJSON era]
-    <>
-    case txbody of
-      ByronTxBody body -> friendlyTxBodyByron body
-      ShelleyTxBody ShelleyBasedEraShelley body aux ->
-        addAuxData aux $ friendlyTxBodyShelley body
-      ShelleyTxBody ShelleyBasedEraAllegra body aux ->
-        addAuxData aux $ friendlyTxBodyAllegra body
-      ShelleyTxBody ShelleyBasedEraMary body aux ->
-        addAuxData aux $ friendlyTxBodyMary body
+  object ["era" .= era, "inputs" .= txIns, "outputs" .= txOuts]
+  where
+    TxBodyContent
+      { txIns -- [TxIn]
+      , txOuts -- [TxOut era]
+      , txFee -- TxFee era
+      , txValidityRange -- (TxValidityLowerBound era, TxValidityUpperBound era)
+      , txMetadata -- TxMetadataInEra era
+      , txAuxScripts -- TxAuxScripts era
+      , txWithdrawals -- TxWithdrawals era
+      , txCertificates -- TxCertificates era
+      , txUpdateProposal -- TxUpdateProposal era
+      , txMintValue -- TxMintValue era
+      } =
+        getTransactionBodyContent txbody
 
 addAuxData :: Show a => Maybe a -> Object -> Object
 addAuxData = HashMap.insert "auxiliary data" . maybe Null (toJSON . textShow)

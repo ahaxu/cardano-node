@@ -103,7 +103,7 @@ library
                       , cardano-prelude
                       , cardano-slotting
                       , cborg
-                      , contra-tracer
+                      -- , contra-tracer
                       , containers
                       , cryptonite
                       , directory
@@ -118,7 +118,7 @@ library
                       , ouroboros-consensus-cardano
                       , ouroboros-consensus-shelley
                       , ouroboros-network
-                      , ouroboros-network-framework
+                      -- , ouroboros-network-framework
                       , scientific
                       , shelley-spec-ledger
                       , small-steps
