@@ -26,9 +26,11 @@ import           Cardano.Api as Api (AddressInEra (..),
                    ShelleyEra, TxBody, TxBodyContent (..), TxCertificates (..), TxFee (..),
                    TxMintValue (..), TxOut (..), TxOutValue (..), TxUpdateProposal (..),
                    TxValidityLowerBound (..), TxValidityUpperBound (..), TxWithdrawals (..),
-                   displayError, getTransactionBodyContent, serialiseAddress,
-                   serialiseAddressForTxOut, validityLowerBoundSupportedInEra,
-                   validityUpperBoundSupportedInEra)
+                   auxScriptsSupportedInEra, certificatesSupportedInEra, displayError,
+                   getTransactionBodyContent, multiAssetSupportedInEra, serialiseAddress,
+                   serialiseAddressForTxOut, txMetadataSupportedInEra, updateProposalSupportedInEra,
+                   validityLowerBoundSupportedInEra, validityUpperBoundSupportedInEra,
+                   withdrawalsSupportedInEra)
 import           Cardano.Api.Byron (Lovelace (..), TxBody (ByronTxBody))
 import           Cardano.Api.Shelley (Address (ShelleyAddress), StakeAddress (..),
                    TxBody (ShelleyTxBody), fromShelleyAddr, fromShelleyStakeAddr)
@@ -67,18 +69,33 @@ friendlyTxBody txbody =
         , txMintValue
         } ->
       Right $
-        object
-          [ "certificates"    .= friendlyCertificates txCertificates
-          , "era"             .= cardanoEra @era
-          , "fee"             .= friendlyFee txFee
-          , "inputs"          .= txIns
-          , "mint"            .= friendlyMintValue txMintValue
-          , "outputs"         .= map friendlyTxOut txOuts
-          , "update proposal" .= friendlyUpdateProposal txUpdateProposal
-          , "validity range"  .= friendlyValidityRange txValidityRange
-          , "withdrawals"     .= friendlyWithdrawals txWithdrawals
-          ]
+      object
+        $   [ "era"     .= era
+            , "fee"     .= friendlyFee txFee
+            , "inputs"  .= txIns
+            , "outputs" .= map friendlyTxOut txOuts
+            ]
+        ++  [ "certificates" .= friendlyCertificates txCertificates
+            | Just _ <- [certificatesSupportedInEra era]
+            ]
+        ++  [ "mint" .= friendlyMintValue txMintValue
+            | Right _ <- [multiAssetSupportedInEra era]
+            ]
+        ++  [ "update proposal" .= friendlyUpdateProposal txUpdateProposal
+            | Just _ <- [updateProposalSupportedInEra era]
+            ]
+        ++  [ "validity range" .= friendlyValidityRange txValidityRange
+            | Just _ <-
+                [ validityLowerBoundSupportedInEra era *>
+                  validityUpperBoundSupportedInEra era
+                ]
+            ]
+        ++  [ "withdrawals" .= friendlyWithdrawals txWithdrawals
+            | Just _ <- [withdrawalsSupportedInEra era]
+            ]
     Left err -> Left $ displayError err
+  where
+    era = cardanoEra @era
 
 friendlyValidityRange
   :: forall era
