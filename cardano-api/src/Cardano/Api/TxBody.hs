@@ -307,6 +307,10 @@ deriving instance Eq   (TxOut era)
 deriving instance Show (TxOut era)
 
 
+fromByronTxOut :: Byron.TxOut -> TxOut ByronEra
+fromByronTxOut = undefined
+
+
 toByronTxOut :: TxOut ByronEra -> Maybe Byron.TxOut
 toByronTxOut (TxOut (AddressInEra ByronAddressInAnyEra (ByronAddress addr))
                     (TxOutAdaOnly AdaOnlyInByronEra value)) =
@@ -1005,6 +1009,7 @@ instance Error (TxBodyError era) where
     displayError TxBodyAuxDataHashInvalidError =
       "Auxiliary data hash is invalid"
 
+
 makeTransactionBody :: forall era.
                        IsCardanoEra era
                     => TxBodyContent era
@@ -1019,7 +1024,7 @@ getTransactionBodyContent :: TxBody era
                           -> Either (TxBodyError era) (TxBodyContent era)
 getTransactionBodyContent = \case
   ByronTxBody body ->
-    getByronTxBodyContent body
+    Right $ getByronTxBodyContent body
   ShelleyTxBody ShelleyBasedEraShelley body aux ->
     getShelleyTxBodyContent body aux
   ShelleyTxBody ShelleyBasedEraAllegra body aux ->
@@ -1060,11 +1065,12 @@ makeByronTransactionBody TxBodyContent { txIns, txOuts } = do
       (TxOut (AddressInEra (ShelleyAddressInEra era) ShelleyAddress{})
              _) = case era of {}
 
-
 getByronTxBodyContent :: Annotated Byron.Tx ByteString
-                      -> Either (TxBodyError ByronEra) (TxBodyContent ByronEra)
-getByronTxBodyContent = undefined
-
+                      -> TxBodyContent ByronEra
+getByronTxBodyContent (Annotated Byron.UnsafeTx{txInputs, txOutputs} _) =
+  makeByronTransactionBodyContent
+    (fromByronTxIn  <$> toList txInputs)
+    (fromByronTxOut <$> toList txOutputs)
 
 makeShelleyTransactionBody :: ShelleyBasedEra era
                            -> TxBodyContent era
@@ -1270,6 +1276,7 @@ makeShelleyTransactionBody era@ShelleyBasedEraMary
                TxAuxScriptsNone   -> []
                TxAuxScripts _ ss' -> ss'
 
+
 getShelleyTxBodyContent ::  Shelley.TxBody (ShelleyLedgerEra ShelleyEra)
                         ->  Maybe
                               (Shelley.Metadata (ShelleyLedgerEra ShelleyEra))
@@ -1329,6 +1336,7 @@ getShelleyTxBodyContent body auxData = do
         SNothing -> TxUpdateProposalNone
         SJust p ->
           TxUpdateProposal UpdateProposalInShelleyEra $ fromShelleyUpdate p
+
 
 getAllegraTxBodyContent ::  ShelleyMA.TxBody (ShelleyLedgerEra AllegraEra)
                         ->  Maybe
@@ -1408,6 +1416,7 @@ getAllegraTxBodyContent
         SJust p ->
           TxUpdateProposal UpdateProposalInAllegraEra $ fromShelleyUpdate p
 
+
 getMaryTxBodyContent  ::  ShelleyMA.TxBody (ShelleyLedgerEra MaryEra)
                       ->  Maybe
                             (ShelleyMA.AuxiliaryData (ShelleyLedgerEra MaryEra))
@@ -1482,12 +1491,14 @@ getMaryTxBodyContent
       | isZero mint = TxMintNone
       | otherwise   = TxMintValue MultiAssetInMaryEra $ fromMaryValue mint
 
+
 toShelleyWithdrawal :: [(StakeAddress, Lovelace)] -> Shelley.Wdrl StandardCrypto
 toShelleyWithdrawal withdrawals =
     Shelley.Wdrl $
       Map.fromList
         [ (toShelleyStakeAddr stakeAddr, toShelleyLovelace value)
         | (stakeAddr, value) <- withdrawals ]
+
 
 fromShelleyWithdrawal :: Map (Shelley.RewardAcnt StandardCrypto) Shelley.Coin
                       -> [(StakeAddress, Lovelace)]
@@ -1496,6 +1507,7 @@ fromShelleyWithdrawal withdrawals =
   | (stakeAddr, value) <- Map.assocs withdrawals
   ]
 
+
 -- | In the Shelley era the auxiliary data consists only of the tx metadata
 toShelleyAuxiliaryData :: Map Word64 TxMetadataValue
                        -> Ledger.AuxiliaryData StandardShelley
@@ -1503,9 +1515,11 @@ toShelleyAuxiliaryData m =
     Shelley.Metadata
       (toShelleyMetadata m)
 
+
 fromShelleyAuxiliaryData  :: Ledger.AuxiliaryData StandardShelley
                           -> Map Word64 TxMetadataValue
 fromShelleyAuxiliaryData (Shelley.Metadata m) = fromShelleyMetadata m
+
 
 -- | In the Allegra and Mary eras the auxiliary data consists of the tx metadata
 -- and the axiliary scripts.
@@ -1523,6 +1537,7 @@ toAllegraAuxiliaryData m ss =
       (toShelleyMetadata m)
       (Seq.fromList (map toShelleyScript ss))
 
+
 fromAllegraAuxiliaryData  ::  Ledger.AuxiliaryData
                                 (ShelleyLedgerEra AllegraEra)
                           ->  ( Map Word64 TxMetadataValue
@@ -1531,10 +1546,12 @@ fromAllegraAuxiliaryData  ::  Ledger.AuxiliaryData
 fromAllegraAuxiliaryData (ShelleyMA.AuxiliaryData ms ss) =
   (fromShelleyMetadata ms, fromAllegraScript <$> toList ss)
 
+
 fromMaryAuxiliaryData :: Ledger.AuxiliaryData (ShelleyLedgerEra MaryEra)
                       -> (Map Word64 TxMetadataValue, [ScriptInEra MaryEra])
 fromMaryAuxiliaryData (ShelleyMA.AuxiliaryData ms ss) =
   (fromShelleyMetadata ms, fromMaryScript <$> toList ss)
+
 
 -- ----------------------------------------------------------------------------
 -- Transitional utility functions for making transaction bodies
@@ -1546,21 +1563,28 @@ makeByronTransaction :: [TxIn]
                      -> [TxOut ByronEra]
                      -> Either (TxBodyError ByronEra) (TxBody ByronEra)
 makeByronTransaction txIns txOuts =
-    makeTransactionBody $
-      TxBodyContent {
-        txIns,
-        txOuts,
-        txFee            = TxFeeImplicit TxFeesImplicitInByronEra,
-        txValidityRange  = (TxValidityNoLowerBound,
-                            TxValidityNoUpperBound
-                              ValidityNoUpperBoundInByronEra),
-        txMetadata       = TxMetadataNone,
-        txAuxScripts     = TxAuxScriptsNone,
-        txWithdrawals    = TxWithdrawalsNone,
-        txCertificates   = TxCertificatesNone,
-        txUpdateProposal = TxUpdateProposalNone,
-        txMintValue      = TxMintNone
-      }
+  makeTransactionBody $ makeByronTransactionBodyContent txIns txOuts
+
+
+makeByronTransactionBodyContent :: [TxIn]
+                                -> [TxOut ByronEra]
+                                -> TxBodyContent ByronEra
+makeByronTransactionBodyContent txIns txOuts =
+  TxBodyContent {
+    txIns,
+    txOuts,
+    txFee            = TxFeeImplicit TxFeesImplicitInByronEra,
+    txValidityRange  = (TxValidityNoLowerBound,
+                        TxValidityNoUpperBound
+                          ValidityNoUpperBoundInByronEra),
+    txMetadata       = TxMetadataNone,
+    txAuxScripts     = TxAuxScriptsNone,
+    txWithdrawals    = TxWithdrawalsNone,
+    txCertificates   = TxCertificatesNone,
+    txUpdateProposal = TxUpdateProposalNone,
+    txMintValue      = TxMintNone
+  }
+
 
 -- | Transitional function to help the CLI move to the updated TxBody API.
 --
