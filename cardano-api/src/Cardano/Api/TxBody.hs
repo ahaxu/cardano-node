@@ -146,7 +146,6 @@ import           Ouroboros.Consensus.Shelley.Protocol.Crypto (StandardCrypto)
 
 import qualified Shelley.Spec.Ledger.Address as Shelley
 import           Shelley.Spec.Ledger.BaseTypes (StrictMaybe (..), maybeToStrictMaybe)
-import qualified Shelley.Spec.Ledger.Coin as Shelley
 import qualified Shelley.Spec.Ledger.Credential as Shelley
 import qualified Shelley.Spec.Ledger.Genesis as Shelley
 import qualified Shelley.Spec.Ledger.Keys as Shelley
@@ -1318,9 +1317,9 @@ getShelleyTxBodyContent body auxData = do
                 TxMetadataNone
               else
                 TxMetadataInEra TxMetadataInShelleyEra (TxMetadata ms)
-    Shelley.Wdrl withdrawals = Shelley._wdrls body
+    withdrawals = Shelley._wdrls body
     txWithdrawals
-      | null withdrawals = TxWithdrawalsNone
+      | null (Shelley.unWdrl withdrawals) = TxWithdrawalsNone
       | otherwise =
           TxWithdrawals WithdrawalsInShelleyEra $
           fromShelleyWithdrawal withdrawals
@@ -1350,7 +1349,7 @@ getAllegraTxBodyContent
     inputs
     outputs
     certificates
-    (Shelley.Wdrl withdrawals)
+    withdrawals
     txfee
     ShelleyMA.ValidityInterval{invalidBefore, invalidHereafter}
     update
@@ -1400,7 +1399,7 @@ getAllegraTxBodyContent
                   _  -> TxAuxScripts AuxScriptsInAllegraEra ss
               )
     txWithdrawals
-      | null withdrawals = TxWithdrawalsNone
+      | null (Shelley.unWdrl withdrawals) = TxWithdrawalsNone
       | otherwise =
           TxWithdrawals WithdrawalsInAllegraEra $
           fromShelleyWithdrawal withdrawals
@@ -1426,7 +1425,7 @@ getMaryTxBodyContent
     inputs
     outputs
     certificates
-    (Shelley.Wdrl withdrawals)
+    withdrawals
     txfee
     ShelleyMA.ValidityInterval{invalidBefore, invalidHereafter}
     update
@@ -1473,7 +1472,7 @@ getMaryTxBodyContent
                   _  -> TxAuxScripts AuxScriptsInMaryEra ss
               )
     txWithdrawals
-      | null withdrawals = TxWithdrawalsNone
+      | null (Shelley.unWdrl withdrawals) = TxWithdrawalsNone
       | otherwise =
           TxWithdrawals WithdrawalsInMaryEra $ fromShelleyWithdrawal withdrawals
     txCertificates
@@ -1500,9 +1499,9 @@ toShelleyWithdrawal withdrawals =
         | (stakeAddr, value) <- withdrawals ]
 
 
-fromShelleyWithdrawal :: Map (Shelley.RewardAcnt StandardCrypto) Shelley.Coin
+fromShelleyWithdrawal :: Shelley.Wdrl StandardCrypto
                       -> [(StakeAddress, Lovelace)]
-fromShelleyWithdrawal withdrawals =
+fromShelleyWithdrawal (Shelley.Wdrl withdrawals) =
   [ (fromShelleyStakeAddr stakeAddr, fromShelleyLovelace value)
   | (stakeAddr, value) <- Map.assocs withdrawals
   ]
