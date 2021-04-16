@@ -1286,7 +1286,7 @@ getShelleyTxBodyContent body auxData = do
   guard (Shelley._mdHash body == adHash') ?! TxBodyAuxDataHashInvalidError
   pure
     TxBodyContent
-      { txIns = fromShelleyTxIn <$> toList (Shelley._inputs body)
+      { txIns
       , txOuts
       , txFee
       , txValidityRange
@@ -1300,6 +1300,7 @@ getShelleyTxBodyContent body auxData = do
   where
     adHash' =
       maybeToStrictMaybe $ Ledger.hashAuxiliaryData @StandardShelley <$> auxData
+    txIns = fromShelleyTxIn <$> toList (Shelley._inputs body)
     txOuts = fromTxOut ShelleyBasedEraShelley <$> toList (Shelley._outputs body)
     txFee =
       TxFeeExplicit TxFeesExplicitInShelleyEra $
