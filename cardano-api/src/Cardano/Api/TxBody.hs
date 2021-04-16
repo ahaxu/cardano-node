@@ -307,7 +307,10 @@ deriving instance Show (TxOut era)
 
 
 fromByronTxOut :: Byron.TxOut -> TxOut ByronEra
-fromByronTxOut = undefined
+fromByronTxOut (Byron.TxOut addr value) =
+  TxOut
+    (AddressInEra ByronAddressInAnyEra (ByronAddress addr))
+    (TxOutAdaOnly AdaOnlyInByronEra (fromByronLovelace value))
 
 
 toByronTxOut :: TxOut ByronEra -> Maybe Byron.TxOut

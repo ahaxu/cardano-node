@@ -218,3 +218,4 @@ friendlyMetadataValue = \case
 friendlyAuxScripts :: TxAuxScripts era -> Value
 friendlyAuxScripts = \case
   TxAuxScriptsNone -> Null
+  -- TxAuxScripts _ _ -> _
