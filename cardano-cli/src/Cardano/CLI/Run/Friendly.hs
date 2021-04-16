@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DisambiguateRecordFields #-}
+{-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
@@ -27,6 +28,7 @@ import           Cardano.Api as Api (AddressInEra (..),
                    TxFee (..), TxMetadata (..), TxMetadataInEra (..), TxMetadataValue (..),
                    TxMintValue (..), TxOut (..), TxOutValue (..), TxUpdateProposal (..),
                    TxValidityLowerBound (..), TxValidityUpperBound (..), TxWithdrawals (..),
+                   ValidityUpperBoundSupportedInEra (ValidityUpperBoundInShelleyEra),
                    auxScriptsSupportedInEra, certificatesSupportedInEra, displayError,
                    getTransactionBodyContent, multiAssetSupportedInEra, serialiseAddress,
                    serialiseAddressForTxOut, txMetadataSupportedInEra, updateProposalSupportedInEra,
@@ -54,7 +56,7 @@ friendlyTxBody txbody =
         { txIns
         , txOuts
         , txFee
-        , txValidityRange = txValidityRange@(_, upperBound)
+        , txValidityRange
         , txMetadata
         , txAuxScripts
         , txWithdrawals
@@ -84,18 +86,7 @@ friendlyTxBody txbody =
         ++  [ "update proposal" .= friendlyUpdateProposal txUpdateProposal
             | Just _ <- [updateProposalSupportedInEra era]
             ]
-        ++  case era of
-              ShelleyEra -> ["time to live" .= ttl] where
-                TxValidityUpperBound _ ttl = upperBound
-              _ ->
-                case
-                  ( validityLowerBoundSupportedInEra era
-                  , validityUpperBoundSupportedInEra era
-                  )
-                of
-                  (Nothing, Nothing) -> []
-                  _ ->
-                    ["validity range" .= friendlyValidityRange txValidityRange]
+        ++  friendlyValidityRange txValidityRange
         ++  [ "withdrawals" .= friendlyWithdrawals txWithdrawals
             | Just _ <- [withdrawalsSupportedInEra era]
             ]
@@ -106,23 +97,36 @@ friendlyTxBody txbody =
 friendlyValidityRange
   :: forall era
   .  IsCardanoEra era
-  => (TxValidityLowerBound era, TxValidityUpperBound era)
-  -> Value
-friendlyValidityRange (lowerBound, upperBound) =
-  object $
-    [ "lower bound" .=
-        case lowerBound of
-          TxValidityNoLowerBound   -> Null
-          TxValidityLowerBound _ s -> toJSON s
-    | Just _ <- [validityLowerBoundSupportedInEra $ cardanoEra @era]
+  => (TxValidityLowerBound era, TxValidityUpperBound era) -> [(Text, Value)]
+friendlyValidityRange = \case
+  ( TxValidityNoLowerBound,
+    TxValidityUpperBound ValidityUpperBoundInShelleyEra ttl
+    ) ->
+      -- special case: in Shelley, upper bound is TTL, and no lower bound
+      ["time to live" .= ttl]
+  (lowerBound, upperBound) ->
+    [ "validity range" .=
+        object
+          ( [ "lower bound" .=
+                case lowerBound of
+                  TxValidityNoLowerBound   -> Null
+                  TxValidityLowerBound _ s -> toJSON s
+            | isLowerBoundSupported
+            ]
+          ++
+            [ "upper bound" .=
+                case upperBound of
+                  TxValidityNoUpperBound _ -> Null
+                  TxValidityUpperBound _ s -> toJSON s
+            | isUpperBoundSupported
+            ]
+          )
+    | isLowerBoundSupported || isUpperBoundSupported
     ]
-    ++
-    [ "upper bound" .=
-        case upperBound of
-          TxValidityNoUpperBound _ -> Null
-          TxValidityUpperBound _ s -> toJSON s
-    | Just _ <- [validityUpperBoundSupportedInEra $ cardanoEra @era]
-    ]
+  where
+    era = cardanoEra @era
+    isLowerBoundSupported = isJust $ validityLowerBoundSupportedInEra era
+    isUpperBoundSupported = isJust $ validityUpperBoundSupportedInEra era
 
 friendlyWithdrawals :: TxWithdrawals era -> Value
 friendlyWithdrawals TxWithdrawalsNone = Null
@@ -217,5 +221,5 @@ friendlyMetadataValue = \case
 
 friendlyAuxScripts :: TxAuxScripts era -> Value
 friendlyAuxScripts = \case
-  TxAuxScriptsNone -> Null
-  -- TxAuxScripts _ _ -> _
+  TxAuxScriptsNone       -> Null
+  TxAuxScripts _ scripts -> toJSON scripts
