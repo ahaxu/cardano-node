@@ -159,9 +159,9 @@ Install the newly built node and CLI commands:
 
 If this doesn't work, you can manually copy the executable files to the `~/.local/bin` directory. Replace the place holder `<TAGGED VERSION>` with your targeted version:
 
-    cp -p dist-newstyle/build/x86_64-linux/ghc-8.10.2/cardano-node-<TAGGED VERSION>/x/cardano-node/build/cardano-node/cardano-node ~/.local/bin/
+    cp -p dist-newstyle/build/x86_64-linux/ghc-8.10.2/cardano-node-<TAGGED VERSION>/x/cardano-node/noopt/build/cardano-node/cardano-node ~/.local/bin/
 
-    cp -p dist-newstyle/build/x86_64-linux/ghc-8.10.2/cardano-cli-<TAGGED VERSION>/x/cardano-cli/build/cardano-cli/cardano-cli ~/.local/bin/
+    cp -p dist-newstyle/build/x86_64-linux/ghc-8.10.2/cardano-cli-<TAGGED VERSION>/x/cardano-cli/noopt/build/cardano-cli/cardano-cli ~/.local/bin/
 
 Check the version that has been installed:
 
